@@ -122,4 +122,23 @@ print(f"Supported payers: {len(get_supported_payers())} payer folders")
 # Test execution when run directly
 if __name__ == "__main__":
     print("🧪 Running PHIL Analytics test with Regence folder...")
-    test_pipeline("Regence")
+
+    # Handle relative imports when running directly
+    import sys
+    import os
+
+    # Add the parent directory to the path so we can import the module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.insert(0, parent_dir)
+
+    # Now import and run the test
+    try:
+        from phil_analytics.pipeline import test_pipeline
+        test_pipeline("Regence")
+    except ImportError as e:
+        print(f"❌ Import error: {e}")
+        print("💡 Tip: Try running from the project root directory instead:")
+        print("   python -c 'from phil_analytics.pipeline import test_pipeline; test_pipeline(\"Regence\")'")
+    except Exception as e:
+        print(f"❌ Error running test: {e}")

@@ -23,7 +23,8 @@ class PhilPipeline:
     """
 
     def __init__(self, payer_folder: str, input_folder: Optional[str] = None,
-                 output_folder: Optional[str] = None, mapping_file: Optional[str] = None):
+                 output_folder: Optional[str] = None, mapping_file: Optional[str] = None,
+                 max_files: Optional[int] = None):
         """
         Initialize the PHIL Analytics pipeline.
 
@@ -32,10 +33,14 @@ class PhilPipeline:
             input_folder (str, optional): Override default input folder path
             output_folder (str, optional): Override default output folder path
             mapping_file (str, optional): Override default mapping file path
+            max_files (int, optional): Maximum number of files to process (for testing)
         """
         print(f"🚀 Initializing PHIL Analytics Pipeline for: {payer_folder}")
+        if max_files:
+            print(f"🧪 Test mode: Limited to {max_files} files")
 
         self.payer_folder = payer_folder
+        self.max_files = max_files
 
         # Set up paths
         if input_folder is None:
@@ -104,7 +109,7 @@ class PhilPipeline:
         print(f"\n📁 Step 1: Combining Excel files")
         step_start_time = time.time()
 
-        self.combiner = ExcelCombiner(self.input_folder)
+        self.combiner = ExcelCombiner(self.input_folder, max_files=self.max_files)
         self.combined_data = self.combiner.combine_files()
 
         step_end_time = time.time()
@@ -167,19 +172,21 @@ class PhilPipeline:
 
 
 # Quick test function for development
-def test_pipeline(payer_folder: str = "Regence") -> Dict[str, Any]:
+def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str, Any]:
     """
     Quick test function for pipeline development.
 
     Args:
         payer_folder (str): Payer folder to test with
+        max_files (int): Maximum number of files to process for testing
 
     Returns:
         Dict[str, Any]: Pipeline results
     """
     print(f"🧪 Testing PHIL Analytics Pipeline with {payer_folder}")
+    print(f"🔧 Test mode: Processing only {max_files} files for faster testing")
 
-    pipeline = PhilPipeline(payer_folder)
+    pipeline = PhilPipeline(payer_folder, max_files=max_files)
     results = pipeline.run_combine_and_scrub()
 
     print(f"\n📊 Test Results Summary:")

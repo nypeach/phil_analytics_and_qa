@@ -181,46 +181,59 @@ def determine_payer_folder(file_parts: list, practice_mapping: Dict[str, str],
     """
     Determine payer folder, EFT number, and practice ID from file parts and check number.
 
+    File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
+
     Args:
         file_parts (list): Parts of the filename split by underscore
         practice_mapping (Dict[str, str]): WS_ID to APP_ID mapping
         payer_df (pd.DataFrame): Payer mapping DataFrame
-        chk_nbr (str): Check number
+        chk_nbr (str): Check number from data (should match file_parts[3])
 
     Returns:
         Tuple[str, str, str]: (payer_folder, eft_num, practice_id)
     """
-    if len(file_parts) >= 2:
-        ws_id = str(file_parts[0])
-        waystar_id = str(file_parts[1])
+    # Handle cases where file_parts might be empty or malformed
+    if len(file_parts) >= 6:
+        ws_id = str(file_parts[0]).strip()           # WS_ID (PRACTICE ID)
+        waystar_id = str(file_parts[1]).strip()      # WAYSTAR ID (for payer lookup)
+        file_chk_nbr = str(file_parts[3]).strip()    # CHK NBR from filename
     else:
-        ws_id = ""
-        waystar_id = ""
+        # If file parsing fails, return empty values
+        return "", chk_nbr, ""
 
-    # Get APP_ID from practice mapping
+    # Use the check number from the filename for consistency
+    actual_chk_nbr = file_chk_nbr
+
+    # Get APP_ID from practice mapping using WS_ID
     app_id = practice_mapping.get(ws_id, "")
 
-    # Determine TRN (transaction number)
-    if app_id and chk_nbr.startswith(app_id):
-        trn = chk_nbr[len(app_id):]
+    # Determine TRN (transaction number) by stripping APP_ID from check number
+    if app_id and actual_chk_nbr.startswith(app_id):
+        trn = actual_chk_nbr[len(app_id):]
     else:
-        trn = chk_nbr
+        trn = actual_chk_nbr
 
     # Check for Zelis pattern (9 digits starting with 6 or 7)
     if (len(trn) == 9 and trn.isdigit() and (trn.startswith("6") or trn.startswith("7"))):
         payer_folder = "Zelis"
     else:
-        # Look up waystar_id in mapping file where PAYER FOLDER != "Zelis"
-        non_zelis_matches = payer_df[
-            (payer_df.iloc[:, 1].str.strip() == waystar_id) &
-            (payer_df.iloc[:, 2].str.strip() != "Zelis")
-        ]
-        if len(non_zelis_matches) > 0:
-            payer_folder = non_zelis_matches.iloc[0, 2].strip()
-        else:
+        # Look up WAYSTAR ID in payer mapping to get PAYER FOLDER
+        try:
+            non_zelis_matches = payer_df[
+                (payer_df.iloc[:, 1].astype(str).str.strip() == waystar_id) &
+                (payer_df.iloc[:, 2].astype(str).str.strip() != "Zelis")
+            ]
+
+            if len(non_zelis_matches) > 0:
+                payer_folder = str(non_zelis_matches.iloc[0, 2]).strip()
+            else:
+                payer_folder = ""
+
+        except Exception as e:
             payer_folder = ""
 
-    return payer_folder, trn, ws_id
+    # Return: (payer_folder, eft_num/trn, practice_id/ws_id)
+    return (payer_folder, trn, ws_id)
 
 
 def format_runtime(seconds: float) -> str:
@@ -257,6 +270,8 @@ def validate_dataframe_columns(df: pd.DataFrame, required_columns: list, operati
     missing_columns = [col for col in required_columns if col not in df.columns]
 
     if missing_columns:
+        print(f"⚠️ Missing columns for {operation}: {missing_columns}")
+        print(f"📋 Available columns: {list(df.columns)}")
         raise ValidationError(
             f"Missing required columns for {operation}: {missing_columns}",
             validation_type="column_validation",
