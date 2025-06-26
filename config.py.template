@@ -1,0 +1,64 @@
+"""
+Configuration template for PHIL Analytics and QA Pipeline
+
+Copy this file to config.py and customize the paths for your environment.
+"""
+
+import os
+
+# Project root directory
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# Data paths configuration
+DATA_ROOT = os.path.join(PROJECT_ROOT, "data")
+INPUT_FOLDER = os.path.join(DATA_ROOT, "input")
+OUTPUT_FOLDER = os.path.join(DATA_ROOT, "output")
+MAPPING_FILE = os.path.join(DATA_ROOT, "mappings", "Proliance Mapping.xlsx")
+
+# Payer folders to process
+PAYERS = [
+    "Aetna",
+    "Amerigroup",
+    "Bundled EFT Coral",
+    "Care Credit",
+    "Centene",
+    "ChampVA",
+    "CHPWA",
+    "Cigna",
+    "Corvel Treasury",
+    "DSHS",
+    "Exceptions",
+    "HMSO",
+    "HNB Echo",
+    "Humana",
+    "Jopari",
+    "Kaiser",
+    "Medicare",
+    "Optum",
+    "Premera",
+    "Providence",
+    "Regence",
+    "Small Payers",
+    "Tricare",
+    "UHC",
+    "USDOL",
+    "VSP",
+    "WA ST & Other",
+    "WA ST L&I",
+    "Zelis"
+]
+
+# Processing options
+DEFAULT_USE_GITHUB_FORMAT = True
+DEFAULT_MAPPING_FILE = "Proliance Mapping.xlsx"
+
+# File naming patterns
+SCRUBBED_SUFFIX = "_Scrubbed.xlsx"
+ANALYTICS_SUFFIX = "_Analytics.md"
+
+# Runtime settings
+VERBOSE_OUTPUT = True
+SAVE_INTERMEDIATE_FILES = False  # Set to True to save scrubbed files
+
+# Pipeline settings
+DEFAULT_PIPELINE_NAME = "PHIL Analytics and QA"
