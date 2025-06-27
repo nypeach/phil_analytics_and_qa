@@ -128,13 +128,13 @@ class ExcelDataProcessor:
         # Filter rows where Enc Nbr is not blank
         enc_rows = pmt_rows[pmt_rows['Enc Nbr'].astype(str).str.strip() != ''].copy()
 
-        # Group by Enc Nbr and Clm Sts combination
-        if not enc_rows.empty and 'Clm Sts' in enc_rows.columns:
-            enc_rows['enc_num'] = enc_rows['Enc Nbr'].astype(str) + '_' + enc_rows['Clm Sts'].astype(str)
+        # Group by Enc Nbr and Clm Sts Cod combination
+        if not enc_rows.empty and 'Clm Sts Cod' in enc_rows.columns:
+            enc_rows['enc_key'] = enc_rows['Enc Nbr'].astype(str) + '_' + enc_rows['Clm Sts Cod'].astype(str)
 
-            for enc_num in enc_rows['enc_num'].unique():
-                if enc_num and enc_num != '_':
-                    encounter_groups[enc_num] = enc_rows[enc_rows['enc_num'] == enc_num].copy()
+            for enc_key in enc_rows['enc_key'].unique():
+                if enc_key and enc_key != '_':
+                    encounter_groups[enc_key] = enc_rows[enc_rows['enc_key'] == enc_key].copy()
 
         return encounter_groups
 
@@ -201,14 +201,18 @@ class ExcelDataProcessor:
         eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
 
         for eft_num in sorted(eft_nums):
-            markdown_content.append(f"<details>\n<summary>{eft_num}</summary>\n\n")
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_num}</summary>\n\n")
 
             # Get EFT rows
             eft_rows = self.get_eft_num_rows(eft_num)
             pmt_groups = self.get_pmt_num_rows(eft_rows)
 
             for pmt_num, pmt_rows in pmt_groups.items():
-                markdown_content.append(f"<details>\n<summary>{pmt_num}</summary>\n\n")
+                # Extract practice_id from pmt_num (format is practice_id_check_number)
+                parts = pmt_num.split('_')
+                practice_id = parts[0] if len(parts) > 0 else pmt_num
+
+                markdown_content.append(f"<details markdown=\"1\">\n<summary>{practice_id}_{pmt_num}</summary>\n\n")
 
                 # PLA Analysis
                 pla_rows = self.get_pla_rows(pmt_rows)
@@ -221,19 +225,27 @@ class ExcelDataProcessor:
                     pla_l6_count = 0
                     pla_other_count = 0
 
-                markdown_content.append(f"* PLAs: {pla_count}\n")
-                markdown_content.append(f"  * L6: {pla_l6_count}\n")
-                markdown_content.append(f"  * Other: {pla_other_count}\n")
+                markdown_content.append(f"<details markdown=\"1\">\n<summary>PLAs:</summary>\n\n")
+                markdown_content.append(f"- Total: {pla_count}\n")
+                markdown_content.append(f"- L6: {pla_l6_count}\n")
+                markdown_content.append(f"- Other: {pla_other_count}\n\n")
+                markdown_content.append("</details>\n\n")
 
                 # Encounter Analysis
                 encounter_groups = self.get_encounter_rows(pmt_rows)
-                markdown_content.append(f"* Encounters\n")
+                markdown_content.append(f"<details markdown=\"1\">\n<summary>Encounters:</summary>\n\n")
 
                 if encounter_groups:
-                    for enc_num in sorted(encounter_groups.keys()):
-                        markdown_content.append(f"  * {enc_num}\n")
+                    for enc_key, enc_rows in encounter_groups.items():
+                        # Extract Enc Nbr and Clm Sts from the key
+                        if '_' in enc_key:
+                            enc_nbr, clm_sts = enc_key.split('_', 1)
+                            markdown_content.append(f"<details><summary>ENC NBR: {enc_nbr} CLM STS: {clm_sts}</summary></details>\n")
+                        else:
+                            markdown_content.append(f"<details><summary>ENC NBR: {enc_key}</summary></details>\n")
 
                 markdown_content.append("\n</details>\n\n")
+                markdown_content.append("</details>\n\n")
 
             markdown_content.append("</details>\n\n")
 

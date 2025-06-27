@@ -21,13 +21,15 @@ class ExcelCombiner:
     but returns a DataFrame instead of saving to Excel.
     """
 
-    def __init__(self, input_folder: str, max_files: int = None):
+    def __init__(self, input_folder: str, max_files: int = None, save_combined: bool = True, output_folder: str = None):
         """
         Initialize the ExcelCombiner.
 
         Args:
             input_folder (str): Path to the folder containing Excel files to combine
             max_files (int, optional): Maximum number of files to process (for testing)
+            save_combined (bool): Whether to save a _combined.xlsx file for testing
+            output_folder (str, optional): Path to the output folder for saving combined file
 
         Raises:
             FileNotFoundError: If the input folder doesn't exist
@@ -35,6 +37,8 @@ class ExcelCombiner:
         print(f"🔧 Initializing Excel combiner for folder: {input_folder}")
         if max_files:
             print(f"   🧪 Test mode: Limited to {max_files} files")
+        if save_combined:
+            print(f"   💾 Will save combined file for testing")
 
         if not os.path.exists(input_folder):
             raise FileNotFoundError(
@@ -45,6 +49,8 @@ class ExcelCombiner:
 
         self.input_folder = input_folder
         self.max_files = max_files
+        self.save_combined = save_combined
+        self.output_folder = output_folder
         self.combined_data = None
         self.file_count = 0
         self.total_rows = 0
@@ -189,6 +195,10 @@ class ExcelCombiner:
                     sample_files = self.combined_data['File'].unique()[:3]
                     print(f"   🔍 Sample File column values: {sample_files.tolist()}")
 
+                # Save combined file if requested
+                if self.save_combined:
+                    self._save_combined_file()
+
                 return self.combined_data
             else:
                 raise DataProcessingError("No data found in combined files")
@@ -198,6 +208,65 @@ class ExcelCombiner:
                 f"Failed to create DataFrame from combined data: {e}",
                 operation="dataframe_creation"
             )
+
+    def _save_combined_file(self) -> None:
+        """Save the combined data to a _combined.xlsx file in the output folder."""
+        if self.combined_data is None:
+            return
+
+        # Extract payer name from input folder
+        payer_name = os.path.basename(self.input_folder.rstrip('/\\'))
+
+        # Determine output directory
+        if self.output_folder:
+            # Use the provided output folder
+            output_dir = self.output_folder
+            # Create output folder if it doesn't exist
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+        else:
+            # Fallback to parent directory of input folder
+            output_dir = os.path.dirname(self.input_folder)
+
+        combined_filename = f"{payer_name}_combined.xlsx"
+        combined_file_path = os.path.join(output_dir, combined_filename)
+
+        print(f"💾 Saving combined file: {combined_filename}")
+        print(f"   📁 Output directory: {output_dir}")
+
+        try:
+            # Use openpyxl engine to maintain text formatting
+            with pd.ExcelWriter(combined_file_path, engine='openpyxl') as writer:
+                self.combined_data.to_excel(writer, sheet_name='Sheet1', index=False)
+
+                # Get the workbook and worksheet
+                workbook = writer.book
+                worksheet = writer.sheets['Sheet1']
+
+                # Format all columns as text to preserve formatting
+                from openpyxl.utils import get_column_letter
+
+                for col_idx, col_name in enumerate(self.combined_data.columns, 1):
+                    col_letter = get_column_letter(col_idx)
+
+                    # Set column format to text for all cells in this column
+                    for row in range(1, len(self.combined_data) + 2):  # +2 for header and 1-indexing
+                        cell = worksheet[f"{col_letter}{row}"]
+                        cell.number_format = '@'  # Text format
+
+                # Bold the header row
+                for cell in worksheet[1]:
+                    cell.font = cell.font.copy(bold=True)
+
+                # Freeze the top row
+                worksheet.freeze_panes = 'A2'
+
+            print(f"   ✅ Combined file saved successfully!")
+            print(f"   📁 Full path: {combined_file_path}")
+            print(f"   📊 Rows saved: {len(self.combined_data):,}")
+
+        except Exception as e:
+            print(f"   ⚠️ Warning: Could not save combined file: {e}")
 
     def get_file_summary(self) -> dict:
         """

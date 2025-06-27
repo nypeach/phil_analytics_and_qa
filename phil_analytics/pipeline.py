@@ -25,7 +25,7 @@ class PhilPipeline:
 
     def __init__(self, payer_folder: str, input_folder: Optional[str] = None,
                  output_folder: Optional[str] = None, mapping_file: Optional[str] = None,
-                 max_files: Optional[int] = None):
+                 max_files: Optional[int] = None, save_combined: bool = True):
         """
         Initialize the PHIL Analytics pipeline.
 
@@ -42,6 +42,7 @@ class PhilPipeline:
 
         self.payer_folder = payer_folder
         self.max_files = max_files
+        self.save_combined = save_combined
 
         # Set up paths
         if input_folder is None:
@@ -148,7 +149,7 @@ class PhilPipeline:
         print(f"\n📁 Step 1: Combining Excel files")
         step_start_time = time.time()
 
-        self.combiner = ExcelCombiner(self.input_folder, max_files=self.max_files)
+        self.combiner = ExcelCombiner(self.input_folder, max_files=self.max_files, save_combined=self.save_combined, output_folder=self.output_folder)
         self.combined_data = self.combiner.combine_files()
 
         step_end_time = time.time()

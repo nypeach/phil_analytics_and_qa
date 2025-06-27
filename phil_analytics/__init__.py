@@ -96,7 +96,7 @@ def get_supported_payers():
         "USDOL", "VSP", "WA ST & Other", "WA ST L&I", "Zelis"
     ]
 
-def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folder=None, mapping_file=None):
+def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folder=None, mapping_file=None, save_combined=True):
     """
     Quick pipeline runner for common use cases.
 
@@ -106,6 +106,7 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
         input_folder (str, optional): Override default input folder path
         output_folder (str, optional): Override default output folder path
         mapping_file (str, optional): Override default mapping file path
+        save_combined (bool): Whether to save a _combined.xlsx file for testing
 
     Returns:
         dict: Results containing analytics data and file paths
@@ -113,8 +114,8 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
     Example:
         >>> # Production run
         >>> result = quick_pipeline("Regence")
-        >>> # Test run with limited files
-        >>> result = quick_pipeline("Regence", max_files=3)
+        >>> # Test run with limited files and combined output
+        >>> result = quick_pipeline("Regence", max_files=3, save_combined=True)
         >>> print(f"Processed {result['file_summary']['total_rows']} rows")
         >>> print(f"Found {result['excel_stats']['total_eft_nums']} EFTs")
     """
@@ -126,27 +127,11 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
         input_folder=input_folder,
         output_folder=output_folder,
         mapping_file=mapping_file,
-        max_files=max_files
+        max_files=max_files,
+        save_combined=save_combined
     )
     return pipeline.run_full_pipeline()
 
 # Library initialization
 print(f"PHIL Analytics and QA Library v{__version__} loaded")
 print(f"Supported payers: {len(get_supported_payers())} payer folders")
-
-# Test execution when run directly
-if __name__ == "__main__":
-    input_folder = "Regence"
-    try:
-        quick_pipeline(input_folder, max_files=3)
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("💡 Make sure all required files are in place:")
-        print("   - phil_analytics/pipeline.py")
-        print("   - phil_analytics/combiner.py")
-        print("   - phil_analytics/scrubber.py")
-        print("   - phil_analytics/excel_data_processor.py")
-        print("   - phil_analytics/exceptions.py")
-        print("   - phil_analytics/utils.py")
-    except Exception as e:
-        print(f"❌ Error running pipeline: {e}")
