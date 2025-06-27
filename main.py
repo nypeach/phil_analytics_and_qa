@@ -43,7 +43,14 @@ def main(payer_folder, max_files=None, save_combined=True):
         print(f"   • Runtime: {results['total_runtime']:.1f} seconds")
         print(f"   • Output folder: {results['output_folder']}")
         print(f"   • Scrubbed file: {results['scrubbed_file']}")
-        print(f"   • Markdown file: {results['markdown_file']}")
+
+        # Print both markdown files
+        if 'markdown_files' in results:
+            print(f"   • Test logic markdown: {results['markdown_files']['test_logic']}")
+            print(f"   • Data structure markdown: {results['markdown_files']['data_structure']}")
+        elif 'markdown_file' in results:
+            # Fallback for older pipeline versions
+            print(f"   • Markdown file: {results['markdown_file']}")
 
     except Exception as e:
         print(f"❌ Error running pipeline: {e}")
@@ -51,6 +58,6 @@ def main(payer_folder, max_files=None, save_combined=True):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    payer_folder = "Regence"
-    max_files = 3
+    payer_folder = "Zelis"
+    max_files = None
     main(payer_folder, max_files)

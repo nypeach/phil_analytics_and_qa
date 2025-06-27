@@ -96,7 +96,9 @@ class ExcelDataProcessor:
 
     def get_pla_rows(self, pmt_rows: pd.DataFrame) -> pd.DataFrame:
         """
-        Get PLA rows where Description begins with "Provider Level Adjustment".
+        Get PLA rows based on the correct criteria:
+        - (Enc Nbr = "" AND Description contains "Provider Level Adjustment") OR
+        - (Clm Nbr = "Provider Lvl Adj" AND Enc Nbr != "" AND Description contains "L6")
 
         Args:
             pmt_rows (pd.DataFrame): Rows filtered by PMT NUM
@@ -107,7 +109,21 @@ class ExcelDataProcessor:
         if 'Description' not in pmt_rows.columns:
             return pd.DataFrame()
 
-        pla_mask = pmt_rows['Description'].astype(str).str.startswith('Provider Level Adjustment', na=False)
+        # Condition 1: Enc Nbr = "" AND Description contains "Provider Level Adjustment"
+        condition1 = (
+            (pmt_rows['Enc Nbr'].astype(str).str.strip() == '') &
+            (pmt_rows['Description'].astype(str).str.contains('Provider Level Adjustment', na=False))
+        )
+
+        # Condition 2: Clm Nbr = "Provider Lvl Adj" AND Enc Nbr != "" AND Description contains "L6"
+        condition2 = (
+            (pmt_rows.get('Clm Nbr', pd.Series(dtype=str)).astype(str).str.strip() == 'Provider Lvl Adj') &
+            (pmt_rows['Enc Nbr'].astype(str).str.strip() != '') &
+            (pmt_rows['Description'].astype(str).str.contains('L6', na=False))
+        )
+
+        # Combine conditions with OR
+        pla_mask = condition1 | condition2
         return pmt_rows[pla_mask].copy()
 
     def get_encounter_rows(self, pmt_rows: pd.DataFrame) -> Dict[str, pd.DataFrame]:
@@ -251,6 +267,67 @@ class ExcelDataProcessor:
 
         return ''.join(markdown_content)
 
+    def generate_data_structure_markdown(self, output_dir: str = ".") -> str:
+        """
+        Generate data structure markdown using the DataStructureBuilder.
+
+        Args:
+            output_dir (str): Directory to save the markdown file
+
+        Returns:
+            str: Path to the saved markdown file
+        """
+        # Import here to avoid circular imports
+        from .data_analysis import DataStructureBuilder
+
+        print(f"🏗️ Building data structure for {self.payer_name}...")
+
+        # Create data structure builder
+        builder = DataStructureBuilder(self.payer_name)
+
+        # Build complete structure using the Excel processor's row identification
+        efts = {}
+
+        # Get all unique EFT NUMs
+        eft_nums = self.df['EFT NUM'].astype(str).unique()
+        eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
+
+        for eft_num in eft_nums:
+            # Get EFT rows and payment groups using our methods
+            eft_rows = self.get_eft_num_rows(eft_num)
+            pmt_groups = self.get_pmt_num_rows(eft_rows)
+
+            # Build EFT object
+            eft_obj = builder.build_eft_object(eft_num, eft_rows, pmt_groups)
+
+            # Build payment objects with their encounters and services
+            enhanced_payments = {}
+            for pmt_key, pmt_rows in pmt_groups.items():
+                # Get PLA rows and encounter groups for this payment
+                pla_rows = self.get_pla_rows(pmt_rows)
+                enc_groups = self.get_encounter_rows(pmt_rows)
+
+                # Build payment object
+                payment_obj = builder.build_payment_object(pmt_key, pmt_rows, pla_rows, enc_groups)
+
+                # Build encounter objects with their services
+                enhanced_encounters = {}
+                for enc_key, enc_rows in enc_groups.items():
+                    service_rows = self.get_service_rows(enc_rows)
+                    encounter_obj = builder.build_encounter_object(enc_key, enc_rows, service_rows)
+                    enhanced_encounters[enc_key] = encounter_obj
+
+                payment_obj["encounters"] = enhanced_encounters
+                enhanced_payments[pmt_key] = payment_obj
+
+            eft_obj["payments"] = enhanced_payments
+            efts[eft_num] = eft_obj
+
+        # Generate and save markdown
+        markdown_path = builder.generate_data_structure_markdown(efts, output_dir)
+
+        return markdown_path
+
     def save_test_logic_markdown(self, output_dir: str = ".") -> str:
         """
         Save the test logic markdown to a file.
@@ -269,6 +346,41 @@ class ExcelDataProcessor:
 
         print(f"Test logic markdown saved to: {output_path}")
         return str(output_path)
+
+    def save_data_structure_markdown(self, output_dir: str = ".") -> str:
+        """
+        Save the data structure markdown to a file.
+
+        Args:
+            output_dir (str): Directory to save the markdown file
+
+        Returns:
+            str: Path to the saved file
+        """
+        return self.generate_data_structure_markdown(output_dir)
+
+    def save_both_markdown_files(self, output_dir: str = ".") -> Dict[str, str]:
+        """
+        Save both the test logic and data structure markdown files.
+
+        Args:
+            output_dir (str): Directory to save the markdown files
+
+        Returns:
+            Dict[str, str]: Paths to both saved files
+        """
+        print(f"📝 Generating both markdown files for {self.payer_name}...")
+
+        # Save test logic markdown
+        test_logic_path = self.save_test_logic_markdown(output_dir)
+
+        # Save data structure markdown
+        data_structure_path = self.generate_data_structure_markdown(output_dir)
+
+        return {
+            "test_logic": test_logic_path,
+            "data_structure": data_structure_path
+        }
 
     def get_all_eft_nums(self) -> List[str]:
         """Get all unique EFT numbers from the dataset."""

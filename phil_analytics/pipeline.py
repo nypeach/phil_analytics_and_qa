@@ -189,7 +189,7 @@ class PhilPipeline:
         print(f"⏱️ File saving runtime: {format_runtime(step_runtime)}")
 
     def _run_excel_processing_step(self) -> None:
-        """Run the Excel processing step to generate test logic markdown."""
+        """Run the Excel processing step to generate both markdown files."""
         print(f"\n📊 Step 4: Processing Excel for analytics")
         step_start_time = time.time()
 
@@ -201,9 +201,10 @@ class PhilPipeline:
         stats = self.excel_processor.get_summary_stats()
         print(f"   📋 Loaded {stats['total_rows']:,} rows with {stats['total_eft_nums']} EFTs")
 
-        # Generate and save test logic markdown
-        markdown_path = self.excel_processor.save_test_logic_markdown(self.output_folder)
-        print(f"   📝 Test logic markdown saved to: {os.path.basename(markdown_path)}")
+        # Generate and save both markdown files
+        markdown_files = self.excel_processor.save_both_markdown_files(self.output_folder)
+        print(f"   📝 Test logic markdown saved to: {os.path.basename(markdown_files['test_logic'])}")
+        print(f"   🏗️ Data structure markdown saved to: {os.path.basename(markdown_files['data_structure'])}")
 
         step_end_time = time.time()
         step_runtime = step_end_time - step_start_time
@@ -251,7 +252,10 @@ class PhilPipeline:
             'excel_stats': self.excel_processor.get_summary_stats() if self.excel_processor else {},
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
-            'markdown_file': os.path.join(self.output_folder, f"{self.payer_folder}_efts.md")
+            'markdown_files': {
+                'test_logic': os.path.join(self.output_folder, f"{self.payer_folder}_efts.md"),
+                'data_structure': os.path.join(self.output_folder, f"{self.payer_folder}_data_structure.md")
+            }
         }
 
         return results
@@ -281,5 +285,7 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
     print(f"   • Bad rows removed: {results['cleaning_stats'].get('bad_rows_removed', 0):,}")
     print(f"   • EFTs found: {results['excel_stats'].get('total_eft_nums', 0)}")
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")
+    print(f"   • Test logic markdown: {results['markdown_files']['test_logic']}")
+    print(f"   • Data structure markdown: {results['markdown_files']['data_structure']}")
 
     return results
