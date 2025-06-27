@@ -205,7 +205,7 @@ class ExcelDataProcessor:
     def generate_test_logic_markdown(self) -> str:
         """
         Generate nested markdown file with GitHub-style toggles for test logic.
-        Now includes encounter review analysis and only shows encounters that need review.
+        Uses same structure as data structure markdown but only shows encounters that need review.
 
         Returns:
             str: Markdown content
@@ -220,48 +220,27 @@ class ExcelDataProcessor:
         encounter_analyzer = EncounterReviewAnalyzer()
         data_builder = DataStructureBuilder(self.payer_name)
 
-        # Get all unique EFT NUMs
+        # Build complete structure first
+        efts = {}
         eft_nums = self.df['EFT NUM'].astype(str).unique()
         eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
 
-        for eft_num in sorted(eft_nums):
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_num}</summary>\n\n")
-
-            # Get EFT rows and build EFT structure
+        # Build complete EFT structure with encounter analysis
+        for eft_num in eft_nums:
             eft_rows = self.get_eft_num_rows(eft_num)
             pmt_groups = self.get_pmt_num_rows(eft_rows)
 
-            # Build EFT object to get payer info
+            # Build EFT object
             eft_obj = data_builder.build_eft_object(eft_num, eft_rows, pmt_groups)
-            payer = eft_obj["payer"]
 
-            for pmt_num, pmt_rows in pmt_groups.items():
-                # Extract practice_id from pmt_num (format is practice_id_check_number)
-                parts = pmt_num.split('_')
-                practice_id = parts[0] if len(parts) > 0 else pmt_num
-
-                markdown_content.append(f"<details markdown=\"1\">\n<summary>{practice_id}_{pmt_num}</summary>\n\n")
-
-                # PLA Analysis
+            # Build payment objects with encounter analysis
+            enhanced_payments = {}
+            for pmt_key, pmt_rows in pmt_groups.items():
                 pla_rows = self.get_pla_rows(pmt_rows)
-                pla_count = len(pla_rows)
-
-                if pla_count > 0:
-                    pla_l6_count = len(pla_rows[pla_rows['Description'].astype(str).str.contains('L6', na=False)])
-                    pla_other_count = pla_count - pla_l6_count
-                else:
-                    pla_l6_count = 0
-                    pla_other_count = 0
-
-                markdown_content.append(f"<details markdown=\"1\">\n<summary>PLAs:</summary>\n\n")
-                markdown_content.append(f"- Total: {pla_count}\n")
-                markdown_content.append(f"- L6: {pla_l6_count}\n")
-                markdown_content.append(f"- Other: {pla_other_count}\n\n")
-                markdown_content.append("</details>\n\n")
-
-                # Build payment structure for encounter analysis
                 enc_groups = self.get_encounter_rows(pmt_rows)
-                payment_obj = data_builder.build_payment_object(pmt_num, pmt_rows, pla_rows, enc_groups)
+
+                # Build payment object
+                payment_obj = data_builder.build_payment_object(pmt_key, pmt_rows, pla_rows, enc_groups)
 
                 # Build complete encounter objects with services
                 enhanced_encounters = {}
@@ -272,32 +251,113 @@ class ExcelDataProcessor:
 
                 payment_obj["encounters"] = enhanced_encounters
 
-                # Perform encounter quick check
-                encs_to_check = encounter_analyzer.encounter_quick_check(payment_obj, payer)
+                # Perform encounter analysis
+                encs_to_check = encounter_analyzer.encounter_quick_check(payment_obj, eft_obj["payer"])
+                payment_obj["encs_to_check"] = encs_to_check
 
-                # Encounter Analysis - only show encounters that need review
-                markdown_content.append(f"<details markdown=\"1\">\n<summary>Encounters:</summary>\n\n")
+                enhanced_payments[pmt_key] = payment_obj
 
-                if encs_to_check:
-                    for enc_key, enc_data in encs_to_check.items():
-                        encounter_title = f"ENC NBR: {enc_data['num']} CLM STS: {enc_data['clm_status']}"
-                        markdown_content.append(f"<details><summary>{encounter_title}</summary>\n\n")
+            eft_obj["payments"] = enhanced_payments
+            efts[eft_num] = eft_obj
 
-                        # Add encounter summary
-                        for enc_type, cpt4_list in enc_data['types'].items():
-                            cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
-                            markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
+        # Separate EFTs by split status
+        not_split_efts = {}
+        split_efts = {}
 
-                        markdown_content.append("\n</details>\n")
-                else:
-                    markdown_content.append("No encounters require review.\n")
+        for eft_num, eft in efts.items():
+            if eft['is_split']:
+                split_efts[eft_num] = eft
+            else:
+                not_split_efts[eft_num] = eft
 
-                markdown_content.append("\n</details>\n\n")
-                markdown_content.append("</details>\n\n")
+        # Generate "EFTs - Not Split" section as toggle
+        not_split_title = f"EFTs - Not Split ({len(not_split_efts)})"
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>{not_split_title}</summary>\n\n")
+
+        for eft_num in sorted(not_split_efts.keys()):
+            eft = not_split_efts[eft_num]
+            self._generate_eft_analysis_section(eft, eft_num, markdown_content)
+
+        markdown_content.append("</details>\n\n")
+
+        # Generate "EFTs - Split" section as toggle
+        split_title = f"EFTs - Split ({len(split_efts)})"
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>{split_title}</summary>\n\n")
+
+        for eft_num in sorted(split_efts.keys()):
+            eft = split_efts[eft_num]
+            self._generate_eft_analysis_section(eft, eft_num, markdown_content)
+
+        markdown_content.append("</details>\n\n")
+
+        return ''.join(markdown_content)
+
+    def _generate_eft_analysis_section(self, eft: Dict, eft_num: str, markdown_content: List[str]) -> None:
+        """
+        Generate the markdown section for a single EFT analysis (similar to data structure but filtered).
+
+        Args:
+            eft (Dict): EFT object with analysis results
+            eft_num (str): EFT number
+            markdown_content (List[str]): List to append markdown content to
+        """
+        eft_title = f"EFT: {eft_num} (Payer: {eft['payer']}, Split: {eft['is_split']}, Payments: {len(eft['payments'])})"
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_title}</summary>\n\n")
+
+        # Payment level
+        for payment_key, payment in eft["payments"].items():
+            payment_title = f"Payment: {payment_key} (Practice: {payment['practice_id']}, Num: {payment['num']})"
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+
+            # PLA section
+            pla_l6_count = len(payment["plas"]["pla_l6"])
+            pla_other_count = len(payment["plas"]["pla_other"])
+            pla_title = f"PLAs (L6: {pla_l6_count}, Other: {pla_other_count})"
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{pla_title}</summary>\n\n")
+
+            if payment["plas"]["pla_l6"]:
+                markdown_content.append("**L6 PLAs:**\n")
+                for pla in payment["plas"]["pla_l6"]:
+                    markdown_content.append(f"- {pla}\n")
+                markdown_content.append("\n")
+
+            if payment["plas"]["pla_other"]:
+                markdown_content.append("**Other PLAs:**\n")
+                for pla in payment["plas"]["pla_other"]:
+                    markdown_content.append(f"- {pla}\n")
+                markdown_content.append("\n")
 
             markdown_content.append("</details>\n\n")
 
-        return ''.join(markdown_content)
+            # Encounters section - only show encounters that need review
+            encs_to_check = payment.get("encs_to_check", {})
+            encounters_title = f"Encounters ({len(encs_to_check)})"
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
+
+            if encs_to_check:
+                for enc_key, enc_check_data in encs_to_check.items():
+                    # Get full encounter data for service count
+                    full_encounter = payment["encounters"].get(enc_key, {})
+                    service_count = len(full_encounter.get("services", []))
+
+                    encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Services: {service_count})"
+                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
+
+                    # Add encounter analysis summary
+                    markdown_content.append("**Review Required:**\n")
+                    for enc_type, cpt4_list in enc_check_data['types'].items():
+                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                        markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
+                    markdown_content.append("\n")
+
+                    markdown_content.append("</details>\n\n")
+            else:
+                markdown_content.append("No encounters require review.\n\n")
+
+            markdown_content.append("</details>\n\n")
+            markdown_content.append("</details>\n\n")
+
+        markdown_content.append("</details>\n\n")
 
     def generate_data_structure_markdown(self, output_dir: str = ".") -> str:
         """

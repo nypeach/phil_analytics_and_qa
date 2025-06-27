@@ -58,6 +58,6 @@ def main(payer_folder, max_files=None, save_combined=True):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    payer_folder = "Zelis"
+    payer_folder = "Tricare"
     max_files = None
     main(payer_folder, max_files)
