@@ -205,12 +205,20 @@ class ExcelDataProcessor:
     def generate_test_logic_markdown(self) -> str:
         """
         Generate nested markdown file with GitHub-style toggles for test logic.
+        Now includes encounter review analysis and only shows encounters that need review.
 
         Returns:
             str: Markdown content
         """
+        # Import here to avoid circular imports
+        from .data_analysis import EncounterReviewAnalyzer, DataStructureBuilder
+
         markdown_content = []
         markdown_content.append(f"# {self.payer_name} EFTs Analysis\n\n")
+
+        # Initialize encounter analyzer and data structure builder
+        encounter_analyzer = EncounterReviewAnalyzer()
+        data_builder = DataStructureBuilder(self.payer_name)
 
         # Get all unique EFT NUMs
         eft_nums = self.df['EFT NUM'].astype(str).unique()
@@ -219,9 +227,13 @@ class ExcelDataProcessor:
         for eft_num in sorted(eft_nums):
             markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_num}</summary>\n\n")
 
-            # Get EFT rows
+            # Get EFT rows and build EFT structure
             eft_rows = self.get_eft_num_rows(eft_num)
             pmt_groups = self.get_pmt_num_rows(eft_rows)
+
+            # Build EFT object to get payer info
+            eft_obj = data_builder.build_eft_object(eft_num, eft_rows, pmt_groups)
+            payer = eft_obj["payer"]
 
             for pmt_num, pmt_rows in pmt_groups.items():
                 # Extract practice_id from pmt_num (format is practice_id_check_number)
@@ -247,18 +259,38 @@ class ExcelDataProcessor:
                 markdown_content.append(f"- Other: {pla_other_count}\n\n")
                 markdown_content.append("</details>\n\n")
 
-                # Encounter Analysis
-                encounter_groups = self.get_encounter_rows(pmt_rows)
+                # Build payment structure for encounter analysis
+                enc_groups = self.get_encounter_rows(pmt_rows)
+                payment_obj = data_builder.build_payment_object(pmt_num, pmt_rows, pla_rows, enc_groups)
+
+                # Build complete encounter objects with services
+                enhanced_encounters = {}
+                for enc_key, enc_rows in enc_groups.items():
+                    service_rows = self.get_service_rows(enc_rows)
+                    encounter_obj = data_builder.build_encounter_object(enc_key, enc_rows, service_rows)
+                    enhanced_encounters[enc_key] = encounter_obj
+
+                payment_obj["encounters"] = enhanced_encounters
+
+                # Perform encounter quick check
+                encs_to_check = encounter_analyzer.encounter_quick_check(payment_obj, payer)
+
+                # Encounter Analysis - only show encounters that need review
                 markdown_content.append(f"<details markdown=\"1\">\n<summary>Encounters:</summary>\n\n")
 
-                if encounter_groups:
-                    for enc_key, enc_rows in encounter_groups.items():
-                        # Extract Enc Nbr and Clm Sts from the key
-                        if '_' in enc_key:
-                            enc_nbr, clm_sts = enc_key.split('_', 1)
-                            markdown_content.append(f"<details><summary>ENC NBR: {enc_nbr} CLM STS: {clm_sts}</summary></details>\n")
-                        else:
-                            markdown_content.append(f"<details><summary>ENC NBR: {enc_key}</summary></details>\n")
+                if encs_to_check:
+                    for enc_key, enc_data in encs_to_check.items():
+                        encounter_title = f"ENC NBR: {enc_data['num']} CLM STS: {enc_data['clm_status']}"
+                        markdown_content.append(f"<details><summary>{encounter_title}</summary>\n\n")
+
+                        # Add encounter summary
+                        for enc_type, cpt4_list in enc_data['types'].items():
+                            cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                            markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
+
+                        markdown_content.append("\n</details>\n")
+                else:
+                    markdown_content.append("No encounters require review.\n")
 
                 markdown_content.append("\n</details>\n\n")
                 markdown_content.append("</details>\n\n")

@@ -404,9 +404,249 @@ class EncounterReviewAnalyzer:
 
     def __init__(self):
         """Initialize the encounter review analyzer."""
+        self.encounter_tags = [
+            "22_no_123", "22_with_123", "appeal_has_adj", "chg_equal_adj",
+            "secondary_n408_pr96", "secondary_co94_oa94", "secondary_mc_tricare_dshs",
+            "tertiary", "enc_payer_not_found", "multiple_to_one", "other_not_posted",
+            "svc_no_match_clm"
+        ]
         self.review_required_encounters = set()
         self.no_review_required_encounters = set()
         self.review_criteria = {}
+
+    def encounter_quick_check(self, payment: Dict, payer: str) -> Dict[str, Dict]:
+        """
+        Perform quick check analysis on encounters within a payment to determine which need review.
+
+        Args:
+            payment (Dict): Payment object with encounters
+            payer (str): Payer name from EFT
+
+        Returns:
+            Dict[str, Dict]: encs_to_check object with encounters that need review
+        """
+        print(f"🔍 Performing encounter quick check for payment {payment.get('practice_id', '')}_{payment.get('num', '')}")
+
+        # Create temporary variables
+        all_encounters = payment["encounters"]
+
+        # Filter encounters by claim status
+        recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] == "22"}
+        non_recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] != "22"}
+
+        primary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                            if v["status"] in ["1", "19"]}
+        secondary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                              if v["status"] in ["2", "20"]}
+        tertiary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                             if v["status"].startswith("3") or v["status"] == "21"}
+
+        # Get services from each encounter type
+        recoupment_services = []
+        for enc in recoupment_encounters.values():
+            recoupment_services.extend(enc["services"])
+
+        primary_services = []
+        for enc in primary_encounters.values():
+            primary_services.extend(enc["services"])
+
+        secondary_services = []
+        for enc in secondary_encounters.values():
+            secondary_services.extend(enc["services"])
+
+        tertiary_services = []
+        for enc in tertiary_encounters.values():
+            tertiary_services.extend(enc["services"])
+
+        # Get CPT4 lists for comparison
+        primary_cpt4s = {svc["cpt4"] for svc in primary_services if svc["cpt4"]}
+        secondary_cpt4s = {svc["cpt4"] for svc in secondary_services if svc["cpt4"]}
+        tertiary_cpt4s = {svc["cpt4"] for svc in tertiary_services if svc["cpt4"]}
+        recoupment_cpt4s = {svc["cpt4"] for svc in recoupment_services if svc["cpt4"]}
+
+        # Initialize encounters to check
+        encs_to_check = {}
+
+        # Process each encounter
+        for enc_key, encounter in all_encounters.items():
+            encounter_tags_found = {}
+
+            # Loop through encounter services
+            for service in encounter["services"]:
+                enc_type = self._analyze_service(
+                    service, payer, primary_cpt4s, secondary_cpt4s,
+                    tertiary_cpt4s, recoupment_cpt4s
+                )
+
+                if enc_type:
+                    if enc_type not in encounter_tags_found:
+                        encounter_tags_found[enc_type] = []
+                    encounter_tags_found[enc_type].append(service["cpt4"])
+
+            # If any tags were found, add to encs_to_check
+            if encounter_tags_found:
+                # Merge services by type (remove duplicates)
+                for enc_type in encounter_tags_found:
+                    encounter_tags_found[enc_type] = list(set(encounter_tags_found[enc_type]))
+
+                encs_to_check[enc_key] = {
+                    "num": encounter["num"],
+                    "clm_status": encounter["status"],
+                    "types": encounter_tags_found
+                }
+
+        print(f"   ✅ Found {len(encs_to_check)} encounters requiring review")
+        return encs_to_check
+
+    def _analyze_service(self, service: Dict, payer: str, primary_cpt4s: set,
+                        secondary_cpt4s: set, tertiary_cpt4s: set, recoupment_cpt4s: set) -> str:
+        """
+        Analyze a single service to determine encounter type tag.
+
+        Args:
+            service (Dict): Service object
+            payer (str): Payer name
+            primary_cpt4s (set): Set of primary service CPT4 codes
+            secondary_cpt4s (set): Set of secondary service CPT4 codes
+            tertiary_cpt4s (set): Set of tertiary service CPT4 codes
+            recoupment_cpt4s (set): Set of recoupment service CPT4 codes
+
+        Returns:
+            str: Encounter type tag or None if no tag applies
+        """
+        description = service.get("description", "").strip()
+        posted_sts = service.get("posting_sts", "").strip()
+        clm_sts = service.get("clm_sts", "").strip()
+        cpt4 = service.get("cpt4", "").strip()
+        txn_status = service.get("txn_status", "").strip()
+        bill_amt = service.get("bill_amt", "").strip()
+        paid_amt = service.get("paid_amt", "").strip()
+        codes = service.get("codes", [])
+        remarks = service.get("remarks", [])
+
+        # HANDLE NOT POSTED
+        if description == "Encounter payer not found.":
+            return "enc_payer_not_found"
+
+        if description == "Charge mismatch on amount.":
+            return "multiple_to_one"
+
+        if description == "Multiple payments found for the same line item.":
+            return "multiple_to_one"
+
+        if description == "Service line payments do not sum to claim level payment.":
+            return "svc_no_match_clm"
+
+        if posted_sts == "Not Posted":
+            return "other_not_posted"
+
+        # HANDLE REPROCESSED
+        if clm_sts == "22":
+            all_other_cpt4s = primary_cpt4s | secondary_cpt4s | tertiary_cpt4s
+            if cpt4 in all_other_cpt4s:
+                return "22_with_123"
+            else:
+                return "22_no_123"
+
+        # HANDLE SECONDARY
+        if clm_sts != "22":
+            # Skip if there's a matching CPT4 in recoupment services
+            if cpt4 in recoupment_cpt4s:
+                return None
+
+            # Check for appeal with adjustment
+            if txn_status == "Appeal" and self._has_adjustment(service):
+                return "appeal_has_adj"
+
+            # Check for charge equal to adjustment (but not appeal)
+            if self._amounts_equal(bill_amt, self._get_adj_amt(service)) and txn_status != "Appeal":
+                return "chg_equal_adj"
+
+        # Secondary claim status specific checks
+        if clm_sts in ["2", "20"]:
+            # Check for N408 + PR96 + (CO45 or OA23)
+            if self._has_codes(codes + remarks, ["N408", "PR96"]) and \
+               self._has_codes(codes + remarks, ["CO45", "OA23"], any_match=True):
+                return "secondary_n408_pr96"
+
+            # Check for (CO94 or OA94) + (CO45 or OA23) + PR96
+            if self._has_codes(codes + remarks, ["CO94", "OA94"], any_match=True) and \
+               self._has_codes(codes + remarks, ["CO45", "OA23"], any_match=True) and \
+               self._has_codes(codes + remarks, ["PR96"]):
+                return "secondary_co94_oa94"
+
+            # Check for Medicare/Tricare/DSHS
+            if payer in ["Medicare", "Tricare", "DSHS"]:
+                return "secondary_mc_tricare_dshs"
+
+        # HANDLE TERTIARY
+        if clm_sts.startswith("3") or clm_sts == "21":
+            return "tertiary"
+
+        return None
+
+    def _has_adjustment(self, service: Dict) -> bool:
+        """Check if service has non-zero adjustment amount."""
+        adj_amt = self._get_adj_amt(service)
+        try:
+            return float(adj_amt) != 0.0
+        except (ValueError, TypeError):
+            return False
+
+    def _get_adj_amt(self, service: Dict) -> str:
+        """Get adjustment amount from service (placeholder - you may need to specify the field)."""
+        # You'll need to specify which field contains the adjustment amount
+        return service.get("adj_amt", "0")
+
+    def _amounts_equal(self, amount1: str, amount2: str) -> bool:
+        """Compare two string amounts for equality."""
+        try:
+            return float(amount1) == float(amount2)
+        except (ValueError, TypeError):
+            return False
+
+    def _has_codes(self, code_list: List[str], required_codes: List[str], any_match: bool = False) -> bool:
+        """
+        Check if required codes are present in the code list.
+
+        Args:
+            code_list (List[str]): List of codes to search in
+            required_codes (List[str]): List of required codes
+            any_match (bool): If True, any code match is sufficient; if False, all codes required
+
+        Returns:
+            bool: True if criteria is met
+        """
+        if any_match:
+            return any(code in code_list for code in required_codes)
+        else:
+            return all(code in code_list for code in required_codes)
+
+    def generate_encounter_summary_markdown(self, encs_to_check: Dict[str, Dict]) -> str:
+        """
+        Generate markdown summary for encounters to check.
+
+        Args:
+            encs_to_check (Dict[str, Dict]): Encounters that need review
+
+        Returns:
+            str: Markdown content for encounter summary
+        """
+        if not encs_to_check:
+            return ""
+
+        markdown_content = []
+
+        for enc_key, enc_data in encs_to_check.items():
+            markdown_content.append(f"{enc_data['num']}_{enc_data['clm_status']}:\n")
+
+            for enc_type, cpt4_list in enc_data['types'].items():
+                cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
+
+            markdown_content.append("\n")
+
+        return "".join(markdown_content)
 
     def analyze_encounter_for_review(self, enc_rows: pd.DataFrame, enc_key: str) -> Dict[str, any]:
         """
@@ -419,7 +659,8 @@ class EncounterReviewAnalyzer:
         Returns:
             Dict[str, any]: Analysis results including review status and reasons
         """
-        # Stub - will implement logic to determine review requirements
+        # This method will be used for more detailed analysis later
+        # For now, use the encounter_quick_check method
         pass
 
 
