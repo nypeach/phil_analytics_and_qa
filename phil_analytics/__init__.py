@@ -32,7 +32,7 @@ try:
     from .combiner import ExcelCombiner
     from .scrubber import DataCleaner
     from .excel_data_processor import ExcelDataProcessor
-    from .pipeline import PhilPipeline, quick_pipeline
+    from .pipeline import PhilPipeline
     from .exceptions import (
         PhilAnalyticsError,
         DataProcessingError,
@@ -43,6 +43,8 @@ except ImportError as e:
     # Handle cases where dependencies might not be installed
     import warnings
     warnings.warn(f"Some components could not be imported: {e}")
+    # Set to None so we can check later
+    PhilPipeline = None
 
 # Define what gets imported with "from phil_analytics import *"
 __all__ = [
@@ -116,6 +118,9 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
         >>> print(f"Processed {result['file_summary']['total_rows']} rows")
         >>> print(f"Found {result['excel_stats']['total_eft_nums']} EFTs")
     """
+    if PhilPipeline is None:
+        raise ImportError("PhilPipeline could not be imported. Check your dependencies and file structure.")
+
     pipeline = PhilPipeline(
         payer_folder=payer_folder,
         input_folder=input_folder,
@@ -132,4 +137,16 @@ print(f"Supported payers: {len(get_supported_payers())} payer folders")
 # Test execution when run directly
 if __name__ == "__main__":
     input_folder = "Regence"
-    quick_pipeline(input_folder, max_files=3)
+    try:
+        quick_pipeline(input_folder, max_files=3)
+    except ImportError as e:
+        print(f"❌ Import error: {e}")
+        print("💡 Make sure all required files are in place:")
+        print("   - phil_analytics/pipeline.py")
+        print("   - phil_analytics/combiner.py")
+        print("   - phil_analytics/scrubber.py")
+        print("   - phil_analytics/excel_data_processor.py")
+        print("   - phil_analytics/exceptions.py")
+        print("   - phil_analytics/utils.py")
+    except Exception as e:
+        print(f"❌ Error running pipeline: {e}")
