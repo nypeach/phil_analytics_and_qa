@@ -7,6 +7,7 @@ scrubbing and validating payment data, and generating analytics reports.
 This library provides a complete pipeline for payment data processing including:
 - Combining multiple Excel files from payer folders
 - Scrubbing and validating payment data with business rules
+- Processing Excel data for detailed analytics
 - Generating comprehensive analytics reports in GitHub-flavored markdown
 
 Example usage:
@@ -16,7 +17,8 @@ Example usage:
 
     Or use individual components:
     >>> from phil_analytics.combiner import ExcelCombiner
-    >>> from phil_analytics.scrubber import PaymentDataScrubber
+    >>> from phil_analytics.scrubber import DataCleaner
+    >>> from phil_analytics.excel_data_processor import ExcelDataProcessor
     >>> from phil_analytics.analytics import AnalyticsGenerator
 """
 
@@ -29,7 +31,8 @@ __description__ = "Payment data analytics and quality assurance pipeline"
 try:
     from .combiner import ExcelCombiner
     from .scrubber import DataCleaner
-    from .pipeline import PhilPipeline, test_pipeline
+    from .excel_data_processor import ExcelDataProcessor
+    from .pipeline import PhilPipeline, quick_pipeline
     from .exceptions import (
         PhilAnalyticsError,
         DataProcessingError,
@@ -45,11 +48,12 @@ except ImportError as e:
 __all__ = [
     # Main pipeline class
     'PhilPipeline',
-    'test_pipeline',
+    'quick_pipeline',
 
     # Individual component classes
     'ExcelCombiner',
     'DataCleaner',
+    'ExcelDataProcessor',
 
     # Exception classes
     'PhilAnalyticsError',
@@ -90,12 +94,13 @@ def get_supported_payers():
         "USDOL", "VSP", "WA ST & Other", "WA ST L&I", "Zelis"
     ]
 
-def quick_pipeline(payer_folder, input_folder=None, output_folder=None, mapping_file=None):
+def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folder=None, mapping_file=None):
     """
     Quick pipeline runner for common use cases.
 
     Args:
         payer_folder (str): Name of the payer folder to process
+        max_files (int, optional): Maximum number of files to process (for testing)
         input_folder (str, optional): Override default input folder path
         output_folder (str, optional): Override default output folder path
         mapping_file (str, optional): Override default mapping file path
@@ -104,14 +109,19 @@ def quick_pipeline(payer_folder, input_folder=None, output_folder=None, mapping_
         dict: Results containing analytics data and file paths
 
     Example:
+        >>> # Production run
         >>> result = quick_pipeline("Regence")
-        >>> print(f"Processed {result['total_rows']} rows")
+        >>> # Test run with limited files
+        >>> result = quick_pipeline("Regence", max_files=3)
+        >>> print(f"Processed {result['file_summary']['total_rows']} rows")
+        >>> print(f"Found {result['excel_stats']['total_eft_nums']} EFTs")
     """
     pipeline = PhilPipeline(
         payer_folder=payer_folder,
         input_folder=input_folder,
         output_folder=output_folder,
-        mapping_file=mapping_file
+        mapping_file=mapping_file,
+        max_files=max_files
     )
     return pipeline.run_full_pipeline()
 
@@ -121,24 +131,5 @@ print(f"Supported payers: {len(get_supported_payers())} payer folders")
 
 # Test execution when run directly
 if __name__ == "__main__":
-    print("🧪 Running PHIL Analytics test with Regence folder...")
-
-    # Handle relative imports when running directly
-    import sys
-    import os
-
-    # Add the parent directory to the path so we can import the module
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    sys.path.insert(0, parent_dir)
-
-    # Now import and run the test
-    try:
-        from phil_analytics.pipeline import test_pipeline
-        test_pipeline("Regence")
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        print("💡 Tip: Try running from the project root directory instead:")
-        print("   python -c 'from phil_analytics.pipeline import test_pipeline; test_pipeline(\"Regence\")'")
-    except Exception as e:
-        print(f"❌ Error running test: {e}")
+    input_folder = "Regence"
+    quick_pipeline(input_folder, max_files=3)
