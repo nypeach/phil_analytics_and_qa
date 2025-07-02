@@ -414,23 +414,28 @@ class EncounterReviewAnalyzer:
         self.no_review_required_encounters = set()
         self.review_criteria = {}
 
-    def encounter_quick_check(self, payment: Dict, payer: str) -> Dict[str, Dict]:
+    def encounter_quick_check(self, payment: Dict, encounter: Dict, payer: str) -> Dict[str, any]:
         """
-        Perform quick check analysis on encounters within a payment to determine which need review.
+        Perform quick check analysis on a single encounter within a payment.
 
         Args:
-            payment (Dict): Payment object with encounters
+            payment (Dict): Payment object with all encounters
+            encounter (Dict): Specific encounter to analyze
             payer (str): Payer name from EFT
 
         Returns:
-            Dict[str, Dict]: encs_to_check object with encounters that need review
+            Dict[str, any]: Analysis results for this specific encounter
         """
-        print(f"🔍 Performing encounter quick check for payment {payment.get('practice_id', '')}_{payment.get('num', '')}")
+        encounter_num = encounter["num"]
+        print(f"🔍 Analyzing encounter {encounter_num} for review requirements")
 
-        # Create temporary variables
-        all_encounters = payment["encounters"]
+        # Create all_encounters for payment encounters where encounter number matches
+        all_encounters = {}
+        for enc_key, enc_data in payment["encounters"].items():
+            if enc_data["num"] == encounter_num:
+                all_encounters[enc_key] = enc_data
 
-        # Filter encounters by claim status
+        # Filter encounters by claim status for the matching encounter number
         recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] == "22"}
         non_recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] != "22"}
 
@@ -441,7 +446,7 @@ class EncounterReviewAnalyzer:
         tertiary_encounters = {k: v for k, v in non_recoupment_encounters.items()
                              if v["status"].startswith("3") or v["status"] == "21"}
 
-        # Get services from each encounter type
+        # Get services from each encounter type for the matching encounter number
         recoupment_services = []
         for enc in recoupment_encounters.values():
             recoupment_services.extend(enc["services"])
@@ -464,39 +469,33 @@ class EncounterReviewAnalyzer:
         tertiary_cpt4s = {svc["cpt4"] for svc in tertiary_services if svc["cpt4"]}
         recoupment_cpt4s = {svc["cpt4"] for svc in recoupment_services if svc["cpt4"]}
 
-        # Initialize encounters to check
-        encs_to_check = {}
+        # Analyze services in the specific encounter
+        encounter_tags_found = {}
 
-        # Process each encounter
-        for enc_key, encounter in all_encounters.items():
-            encounter_tags_found = {}
+        for service in encounter["services"]:
+            enc_type = self._analyze_service(
+                service, payer, primary_cpt4s, secondary_cpt4s,
+                tertiary_cpt4s, recoupment_cpt4s
+            )
 
-            # Loop through encounter services
-            for service in encounter["services"]:
-                enc_type = self._analyze_service(
-                    service, payer, primary_cpt4s, secondary_cpt4s,
-                    tertiary_cpt4s, recoupment_cpt4s
-                )
+            if enc_type:
+                if enc_type not in encounter_tags_found:
+                    encounter_tags_found[enc_type] = []
+                encounter_tags_found[enc_type].append(service["cpt4"])
 
-                if enc_type:
-                    if enc_type not in encounter_tags_found:
-                        encounter_tags_found[enc_type] = []
-                    encounter_tags_found[enc_type].append(service["cpt4"])
+        # Return analysis for this specific encounter
+        if encounter_tags_found:
+            # Merge services by type (remove duplicates)
+            for enc_type in encounter_tags_found:
+                encounter_tags_found[enc_type] = list(set(encounter_tags_found[enc_type]))
 
-            # If any tags were found, add to encs_to_check
-            if encounter_tags_found:
-                # Merge services by type (remove duplicates)
-                for enc_type in encounter_tags_found:
-                    encounter_tags_found[enc_type] = list(set(encounter_tags_found[enc_type]))
-
-                encs_to_check[enc_key] = {
-                    "num": encounter["num"],
-                    "clm_status": encounter["status"],
-                    "types": encounter_tags_found
-                }
-
-        print(f"   ✅ Found {len(encs_to_check)} encounters requiring review")
-        return encs_to_check
+            return {
+                "num": encounter["num"],
+                "clm_status": encounter["status"],
+                "types": encounter_tags_found
+            }
+        else:
+            return None
 
     def _analyze_service(self, service: Dict, payer: str, primary_cpt4s: set,
                         secondary_cpt4s: set, tertiary_cpt4s: set, recoupment_cpt4s: set) -> str:
