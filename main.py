@@ -39,18 +39,15 @@ def main(payer_folder, max_files=None, save_combined=True):
         print(f"   • Files processed: {results['file_summary'].get('total_files', 'Unknown')}")
         print(f"   • Total rows: {results['file_summary'].get('total_rows', 'Unknown'):,}")
         print(f"   • Bad rows removed: {results['cleaning_stats'].get('bad_rows_removed', 0):,}")
-        print(f"   • EFTs found: {results['excel_stats'].get('total_eft_nums', 0)}")
+        print(f"   • EFTs found: {results['data_object_stats'].get('total_eft_nums', 0)}")
+        print(f"   • Split EFTs: {results['markdown_stats'].get('split_efts', 0)}")
+        print(f"   • Not Split EFTs: {results['markdown_stats'].get('not_split_efts', 0)}")
+        print(f"   • Total encounters: {results['markdown_stats'].get('total_encounters', 0)}")
+        print(f"   • Encounters to check: {results['markdown_stats'].get('total_encounters_to_check', 0)}")
         print(f"   • Runtime: {results['total_runtime']:.1f} seconds")
         print(f"   • Output folder: {results['output_folder']}")
         print(f"   • Scrubbed file: {results['scrubbed_file']}")
-
-        # Print both markdown files
-        if 'markdown_files' in results:
-            print(f"   • Test logic markdown: {results['markdown_files']['test_logic']}")
-            print(f"   • Data structure markdown: {results['markdown_files']['data_structure']}")
-        elif 'markdown_file' in results:
-            # Fallback for older pipeline versions
-            print(f"   • Markdown file: {results['markdown_file']}")
+        print(f"   • EFTs markdown: {results['markdown_file']}")
 
     except Exception as e:
         print(f"❌ Error running pipeline: {e}")
@@ -61,4 +58,3 @@ if __name__ == "__main__":
     payer_folder = "Regence"
     max_files = None
     main(payer_folder, max_files)
-

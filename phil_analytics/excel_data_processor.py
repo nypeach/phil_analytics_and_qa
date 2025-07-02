@@ -1,3 +1,10 @@
+"""
+PHIL Analytics and QA Library - Excel Data Processor
+
+This module processes Excel spreadsheet data while maintaining text formatting.
+Creates data objects with EFT -> Payment -> Encounter -> Service hierarchy.
+"""
+
 import pandas as pd
 import openpyxl
 from pathlib import Path
@@ -5,9 +12,10 @@ from typing import Dict, List, Optional, Union
 from collections import defaultdict
 import re
 
-class ExcelDataProcessor:
+
+class ExcelDataObjectCreator:
     """
-    Class to process Excel spreadsheet data while maintaining text formatting.
+    Creates data objects from Excel spreadsheet data while maintaining text formatting.
     Handles grouping of rows by EFT NUM, PMT NUM, PLAs, Encounters, and Services.
     """
 
@@ -23,6 +31,7 @@ class ExcelDataProcessor:
         self.process_limit = process_limit
         self.df = None
         self.payer_name = None
+        self.data_object = {}
         self._load_data()
 
     def _load_data(self):
@@ -59,6 +68,45 @@ class ExcelDataProcessor:
         except Exception as e:
             print(f"Error loading data: {e}")
             raise
+
+    def create_data_object(self) -> Dict:
+        """
+        Create the complete data object with EFT -> Payment -> Encounter -> Service hierarchy.
+
+        Returns:
+            Dict: Complete data object with all EFTs, payments, encounters, and services
+        """
+        print(f"🏗️ Creating data object for {self.payer_name}...")
+
+        # Get all unique EFT NUMs
+        eft_nums = self.df['EFT NUM'].astype(str).unique()
+        eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
+
+        self.data_object = {}
+
+        for eft_num in eft_nums:
+            print(f"   📊 Processing EFT: {eft_num}")
+
+            # Get all rows for this EFT
+            eft_rows = self.get_eft_num_rows(eft_num)
+
+            # Create EFT object
+            eft_obj = self._create_eft_object(eft_num, eft_rows)
+
+            # Get payment groups for this EFT
+            pmt_groups = self.get_pmt_num_rows(eft_rows)
+
+            # Create payment objects
+            payments = {}
+            for pmt_key, pmt_rows in pmt_groups.items():
+                payment_obj = self._create_payment_object(pmt_key, pmt_rows)
+                payments[pmt_key] = payment_obj
+
+            eft_obj["payments"] = payments
+            self.data_object[eft_num] = eft_obj
+
+        print(f"✅ Data object created with {len(self.data_object)} EFTs")
+        return self.data_object
 
     def get_eft_num_rows(self, eft_num: str) -> pd.DataFrame:
         """
@@ -170,360 +218,254 @@ class ExcelDataProcessor:
         service_mask = enc_rows['CPT4'].astype(str).str.strip() != ''
         return enc_rows[service_mask].copy()
 
-    def get_reason_codes(self, service_rows: pd.DataFrame) -> List[str]:
+    def _create_eft_object(self, eft_num: str, eft_rows: pd.DataFrame) -> Dict:
         """
-        Get reason codes from service rows.
+        Create EFT object from the rows.
 
         Args:
-            service_rows (pd.DataFrame): Service rows
-
-        Returns:
-            List[str]: List of reason codes
-        """
-        if 'Reason Cd' not in service_rows.columns:
-            return []
-
-        reason_codes = service_rows['Reason Cd'].astype(str).str.strip()
-        return [code for code in reason_codes.unique() if code and code != '']
-
-    def get_remark_codes(self, service_rows: pd.DataFrame) -> List[str]:
-        """
-        Get remark codes from service rows.
-
-        Args:
-            service_rows (pd.DataFrame): Service rows
-
-        Returns:
-            List[str]: List of remark codes
-        """
-        if 'Remark Codes' not in service_rows.columns:
-            return []
-
-        remark_codes = service_rows['Remark Codes'].astype(str).str.strip()
-        return [code for code in remark_codes.unique() if code and code != '']
-
-    def generate_test_logic_markdown(self) -> str:
-        """
-        Generate nested markdown file with GitHub-style toggles for test logic.
-        Uses same structure as data structure markdown but only shows encounters that need review.
-
-        Returns:
-            str: Markdown content
-        """
-        # Import here to avoid circular imports
-        from .data_analysis import EncounterReviewAnalyzer, DataStructureBuilder
-
-        markdown_content = []
-        markdown_content.append(f"# {self.payer_name} EFTs Analysis\n\n")
-
-        # Initialize encounter analyzer and data structure builder
-        encounter_analyzer = EncounterReviewAnalyzer()
-        data_builder = DataStructureBuilder(self.payer_name)
-
-        # Build complete structure first
-        efts = {}
-        eft_nums = self.df['EFT NUM'].astype(str).unique()
-        eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
-
-        # Build complete EFT structure with encounter analysis
-        for eft_num in eft_nums:
-            eft_rows = self.get_eft_num_rows(eft_num)
-            pmt_groups = self.get_pmt_num_rows(eft_rows)
-
-            # Build EFT object
-            eft_obj = data_builder.build_eft_object(eft_num, eft_rows, pmt_groups)
-
-            # Build payment objects with encounter analysis
-            enhanced_payments = {}
-            for pmt_key, pmt_rows in pmt_groups.items():
-                pla_rows = self.get_pla_rows(pmt_rows)
-                enc_groups = self.get_encounter_rows(pmt_rows)
-
-                # Build payment object
-                payment_obj = data_builder.build_payment_object(pmt_key, pmt_rows, pla_rows, enc_groups)
-
-                # Build complete encounter objects with services
-                enhanced_encounters = {}
-                for enc_key, enc_rows in enc_groups.items():
-                    service_rows = self.get_service_rows(enc_rows)
-                    encounter_obj = data_builder.build_encounter_object(enc_key, enc_rows, service_rows)
-                    enhanced_encounters[enc_key] = encounter_obj
-
-                payment_obj["encounters"] = enhanced_encounters
-
-                # Perform encounter analysis
-                encs_to_check = encounter_analyzer.encounter_quick_check(payment_obj, eft_obj["payer"])
-                payment_obj["encs_to_check"] = encs_to_check
-
-                enhanced_payments[pmt_key] = payment_obj
-
-            eft_obj["payments"] = enhanced_payments
-            efts[eft_num] = eft_obj
-
-        # Separate EFTs by split status
-        not_split_efts = {}
-        split_efts = {}
-
-        for eft_num, eft in efts.items():
-            if eft['is_split']:
-                split_efts[eft_num] = eft
-            else:
-                not_split_efts[eft_num] = eft
-
-        # Generate "EFTs - Not Split" section as toggle
-        not_split_title = f"EFTs - Not Split ({len(not_split_efts)})"
-        markdown_content.append(f"<details markdown=\"1\">\n<summary>{not_split_title}</summary>\n\n")
-
-        for eft_num in sorted(not_split_efts.keys()):
-            eft = not_split_efts[eft_num]
-            self._generate_eft_analysis_section(eft, eft_num, markdown_content)
-
-        markdown_content.append("</details>\n\n")
-
-        # Generate "EFTs - Split" section as toggle
-        split_title = f"EFTs - Split ({len(split_efts)})"
-        markdown_content.append(f"<details markdown=\"1\">\n<summary>{split_title}</summary>\n\n")
-
-        for eft_num in sorted(split_efts.keys()):
-            eft = split_efts[eft_num]
-            self._generate_eft_analysis_section(eft, eft_num, markdown_content)
-
-        markdown_content.append("</details>\n\n")
-
-        return ''.join(markdown_content)
-
-    def _generate_eft_analysis_section(self, eft: Dict, eft_num: str, markdown_content: List[str]) -> None:
-        """
-        Generate the markdown section for a single EFT analysis (similar to data structure but filtered).
-
-        Args:
-            eft (Dict): EFT object with analysis results
             eft_num (str): EFT number
-            markdown_content (List[str]): List to append markdown content to
-        """
-        # Calculate total encounters to check across all payments in this EFT
-        total_encs_to_check = 0
-        for payment in eft["payments"].values():
-            encs_to_check = payment.get("encs_to_check", {})
-            total_encs_to_check += len(encs_to_check)
-
-        eft_title = f"EFT: {eft_num} (Payer: {eft['payer']}, Payments: {len(eft['payments'])}, Encs To Check: {total_encs_to_check})"
-        markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_title}</summary>\n\n")
-
-        # Payment level
-        for payment_key, payment in eft["payments"].items():
-            payment_title = f"Payment: {payment_key} (Practice: {payment['practice_id']}, Num: {payment['num']})"
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
-
-            # PLA section
-            pla_l6_count = len(payment["plas"]["pla_l6"])
-            pla_other_count = len(payment["plas"]["pla_other"])
-            pla_title = f"PLAs (L6: {pla_l6_count}, Other: {pla_other_count})"
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{pla_title}</summary>\n\n")
-
-            if payment["plas"]["pla_l6"]:
-                markdown_content.append("**L6 PLAs:**\n")
-                for pla in payment["plas"]["pla_l6"]:
-                    markdown_content.append(f"- {pla}\n")
-                markdown_content.append("\n")
-
-            if payment["plas"]["pla_other"]:
-                markdown_content.append("**Other PLAs:**\n")
-                for pla in payment["plas"]["pla_other"]:
-                    markdown_content.append(f"- {pla}\n")
-                markdown_content.append("\n")
-
-            markdown_content.append("</details>\n\n")
-
-            # Encounters section - only show encounters that need review
-            encs_to_check = payment.get("encs_to_check", {})
-            encounters_title = f"Encounters to Check ({len(encs_to_check)})"
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
-
-            if encs_to_check:
-                for enc_key, enc_check_data in encs_to_check.items():
-                    # Count number of types to check for this encounter
-                    review_count = len(enc_check_data['types'])
-
-                    encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Review: {review_count})"
-                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
-
-                    # Add encounter analysis summary
-                    for enc_type, cpt4_list in enc_check_data['types'].items():
-                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
-                        markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
-
-                    markdown_content.append("\n</details>\n\n")
-            else:
-                markdown_content.append("No encounters require review.\n\n")
-
-            # COMMENTED OUT - Previous structures (keep for later use)
-            """
-            # Type-grouped structure
-            if encs_to_check:
-                # Group encounters by type
-                encounters_by_type = {}
-                for enc_key, enc_check_data in encs_to_check.items():
-                    for enc_type, cpt4_list in enc_check_data['types'].items():
-                        if enc_type not in encounters_by_type:
-                            encounters_by_type[enc_type] = []
-
-                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
-                        enc_display = f"{enc_check_data['num']}_{enc_check_data['clm_status']}: {cpt4_str}"
-                        encounters_by_type[enc_type].append(enc_display)
-
-                # Generate sections for each type
-                for enc_type, encounter_list in encounters_by_type.items():
-                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{enc_type}</summary>\n\n")
-
-                    for encounter_display in encounter_list:
-                        markdown_content.append(f"- {encounter_display}\n")
-
-                    markdown_content.append("\n</details>\n\n")
-
-            # Original individual encounter structure with service count
-            if encs_to_check:
-                for enc_key, enc_check_data in encs_to_check.items():
-                    # Get full encounter data for service count
-                    full_encounter = payment["encounters"].get(enc_key, {})
-                    service_count = len(full_encounter.get("services", []))
-
-                    encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Services: {service_count})"
-                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
-
-                    # Add encounter analysis summary without header
-                    for enc_type, cpt4_list in enc_check_data['types'].items():
-                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
-                        markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
-                    markdown_content.append("\n")
-
-                    markdown_content.append("</details>\n\n")
-            """
-
-            markdown_content.append("</details>\n\n")
-            markdown_content.append("</details>\n\n")
-
-        markdown_content.append("</details>\n\n")
-
-    def generate_data_structure_markdown(self, output_dir: str = ".") -> str:
-        """
-        Generate data structure markdown using the DataStructureBuilder.
-
-        Args:
-            output_dir (str): Directory to save the markdown file
+            eft_rows (pd.DataFrame): All rows for this EFT
 
         Returns:
-            str: Path to the saved markdown file
+            Dict: EFT object with all attributes
         """
-        # Import here to avoid circular imports
-        from .data_analysis import DataStructureBuilder
+        # Get payer from PAYER FOLDER column if available, otherwise use payer_name
+        payer = self.payer_name
+        if 'PAYER FOLDER' in eft_rows.columns:
+            payer_values = eft_rows['PAYER FOLDER'].astype(str).unique()
+            payer_values = [p for p in payer_values if p and p.strip() != '']
+            if payer_values:
+                payer = payer_values[0]  # Use first non-empty payer folder value
 
-        print(f"🏗️ Building data structure for {self.payer_name}...")
-
-        # Create data structure builder
-        builder = DataStructureBuilder(self.payer_name)
-
-        # Build complete structure using the Excel processor's row identification
-        efts = {}
-
-        # Get all unique EFT NUMs
-        eft_nums = self.df['EFT NUM'].astype(str).unique()
-        eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
-
-        for eft_num in eft_nums:
-            # Get EFT rows and payment groups using our methods
-            eft_rows = self.get_eft_num_rows(eft_num)
-            pmt_groups = self.get_pmt_num_rows(eft_rows)
-
-            # Build EFT object
-            eft_obj = builder.build_eft_object(eft_num, eft_rows, pmt_groups)
-
-            # Build payment objects with their encounters and services
-            enhanced_payments = {}
-            for pmt_key, pmt_rows in pmt_groups.items():
-                # Get PLA rows and encounter groups for this payment
-                pla_rows = self.get_pla_rows(pmt_rows)
-                enc_groups = self.get_encounter_rows(pmt_rows)
-
-                # Build payment object
-                payment_obj = builder.build_payment_object(pmt_key, pmt_rows, pla_rows, enc_groups)
-
-                # Build encounter objects with their services
-                enhanced_encounters = {}
-                for enc_key, enc_rows in enc_groups.items():
-                    service_rows = self.get_service_rows(enc_rows)
-                    encounter_obj = builder.build_encounter_object(enc_key, enc_rows, service_rows)
-                    enhanced_encounters[enc_key] = encounter_obj
-
-                payment_obj["encounters"] = enhanced_encounters
-                enhanced_payments[pmt_key] = payment_obj
-
-            eft_obj["payments"] = enhanced_payments
-            efts[eft_num] = eft_obj
-
-        # Generate and save markdown
-        markdown_path = builder.generate_data_structure_markdown(efts, output_dir)
-
-        return markdown_path
-
-    def save_test_logic_markdown(self, output_dir: str = ".") -> str:
-        """
-        Save the test logic markdown to a file.
-
-        Args:
-            output_dir (str): Directory to save the markdown file
-
-        Returns:
-            str: Path to the saved file
-        """
-        markdown_content = self.generate_test_logic_markdown()
-        output_path = Path(output_dir) / f"{self.payer_name}_efts.md"
-
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        print(f"Test logic markdown saved to: {output_path}")
-        return str(output_path)
-
-    def save_data_structure_markdown(self, output_dir: str = ".") -> str:
-        """
-        Save the data structure markdown to a file.
-
-        Args:
-            output_dir (str): Directory to save the markdown file
-
-        Returns:
-            str: Path to the saved file
-        """
-        return self.generate_data_structure_markdown(output_dir)
-
-    def save_both_markdown_files(self, output_dir: str = ".") -> Dict[str, str]:
-        """
-        Save both the test logic and data structure markdown files.
-
-        Args:
-            output_dir (str): Directory to save the markdown files
-
-        Returns:
-            Dict[str, str]: Paths to both saved files
-        """
-        print(f"📝 Generating both markdown files for {self.payer_name}...")
-
-        # Save test logic markdown
-        test_logic_path = self.save_test_logic_markdown(output_dir)
-
-        # Save data structure markdown
-        data_structure_path = self.generate_data_structure_markdown(output_dir)
-
-        return {
-            "test_logic": test_logic_path,
-            "data_structure": data_structure_path
+        # Build EFT object
+        eft = {
+            "eft_num": str(eft_num),
+            "payer": str(payer),
+            "is_split": False,  # Will be set by PaymentTagger
+            "status": "",  # Will be set by PaymentTagger
+            "payments": {}  # Will be populated with payment objects
         }
 
-    def get_all_eft_nums(self) -> List[str]:
-        """Get all unique EFT numbers from the dataset."""
-        eft_nums = self.df['EFT NUM'].astype(str).unique()
-        return [eft for eft in eft_nums if eft and eft.strip() != '']
+        return eft
+
+    def _create_payment_object(self, payment_key: str, pmt_rows: pd.DataFrame) -> Dict:
+        """
+        Create payment object from the rows.
+
+        Args:
+            payment_key (str): Payment key (practice_id_check_number)
+            pmt_rows (pd.DataFrame): All rows for this payment
+
+        Returns:
+            Dict: Payment object with all attributes
+        """
+        # Extract practice_id and payment number from key
+        parts = payment_key.split('_')
+        practice_id = parts[0] if len(parts) > 0 else ""
+        pmt_num = parts[1] if len(parts) > 1 else ""
+
+        # Get PLA rows for this payment
+        pla_rows = self.get_pla_rows(pmt_rows)
+        plas = self._create_pla_objects(pla_rows)
+
+        # Get encounter groups for this payment
+        enc_groups = self.get_encounter_rows(pmt_rows)
+        encounters = {}
+
+        for enc_key, enc_rows in enc_groups.items():
+            encounter_obj = self._create_encounter_object(enc_key, enc_rows)
+            encounters[enc_key] = encounter_obj
+
+        # Build payment object
+        payment = {
+            "practice_id": str(practice_id),
+            "num": str(pmt_num),
+            "status": "",  # Will be set by PaymentTagger
+            "plas": plas,
+            "encounters": encounters,
+            "encs_to_check": {}  # Will be populated by EncounterTagger
+        }
+
+        return payment
+
+    def _create_pla_objects(self, pla_rows: pd.DataFrame) -> Dict[str, List]:
+        """
+        Create PLA objects from PLA rows.
+
+        Args:
+            pla_rows (pd.DataFrame): PLA rows
+
+        Returns:
+            Dict[str, List]: PLA objects with L6 and other categories
+        """
+        pla_l6 = []
+        pla_other = []
+
+        if 'Description' in pla_rows.columns:
+            for _, row in pla_rows.iterrows():
+                description = str(row['Description']).strip()
+                clm_nbr = str(row.get('Clm Nbr', '')).strip()
+                enc_nbr = str(row.get('Enc Nbr', '')).strip()
+
+                # Clean description - remove "Provider Level Adjustment found: " prefix
+                clean_description = self._clean_pla_description(description)
+
+                # L6 PLAs are identified by condition 2 from the PLA criteria:
+                # Clm Nbr = "Provider Lvl Adj" AND Enc Nbr != "" AND Description contains "L6"
+                is_l6 = (
+                    clm_nbr == "Provider Lvl Adj" and
+                    enc_nbr != "" and
+                    'L6' in description
+                )
+
+                if is_l6:
+                    pla_l6.append(clean_description)
+                else:
+                    pla_other.append(clean_description)
+
+        return {
+            "pla_l6": pla_l6,
+            "pla_other": pla_other
+        }
+
+    def _clean_pla_description(self, description: str) -> str:
+        """
+        Clean PLA description by removing the "Provider Level Adjustment found: " prefix.
+
+        Args:
+            description (str): Original PLA description
+
+        Returns:
+            str: Cleaned description with prefix removed
+        """
+        # Remove "Provider Level Adjustment found: " prefix if present
+        if "Provider Level Adjustment found: " in description:
+            return description.replace("Provider Level Adjustment found: ", "").strip()
+
+        # Also handle other potential prefixes
+        if "Provider Level Adjustment " in description:
+            # Find the part after "Provider Level Adjustment" and any following text until we hit the actual data
+            parts = description.split("Provider Level Adjustment")
+            if len(parts) > 1:
+                # Look for the actual amount/data part (usually starts with $ or other data)
+                remaining = parts[1].strip()
+                # Remove common prefixes like "found: ", "applied: ", etc.
+                for prefix in ["found: ", "applied: ", ": ", " - "]:
+                    if remaining.startswith(prefix):
+                        remaining = remaining[len(prefix):].strip()
+                        break
+                return remaining
+
+        # If no known prefix, return original description
+        return description
+
+    def _create_encounter_object(self, encounter_key: str, enc_rows: pd.DataFrame) -> Dict:
+        """
+        Create encounter object from the rows.
+
+        Args:
+            encounter_key (str): Encounter key (enc_nbr_clm_sts)
+            enc_rows (pd.DataFrame): All rows for this encounter
+
+        Returns:
+            Dict: Encounter object with all attributes
+        """
+        # Parse encounter key
+        if '_' in encounter_key:
+            enc_nbr, clm_sts = encounter_key.split('_', 1)
+        else:
+            enc_nbr = encounter_key
+            clm_sts = ""
+
+        # Clean claim status - remove parenthetical text
+        if '(' in clm_sts:
+            clm_sts = clm_sts.split('(')[0].strip()
+
+        # Get service rows for this encounter
+        service_rows = self.get_service_rows(enc_rows)
+        services = self._create_service_objects(service_rows)
+
+        # Build encounter object
+        encounter = {
+            "num": str(enc_nbr),
+            "status": str(clm_sts),
+            "services": services,
+            "tags": []  # Will be populated by EncounterTagger
+        }
+
+        return encounter
+
+    def _create_service_objects(self, service_rows: pd.DataFrame) -> List[Dict]:
+        """
+        Create service objects from service rows.
+
+        Args:
+            service_rows (pd.DataFrame): Service rows (rows with CPT4 codes)
+
+        Returns:
+            List[Dict]: List of service objects
+        """
+        services = []
+
+        for _, row in service_rows.iterrows():
+            service = self._create_service_object(row)
+            services.append(service)
+
+        return services
+
+    def _create_service_object(self, row: pd.Series) -> Dict:
+        """
+        Create individual service object from a single row.
+
+        Args:
+            row (pd.Series): Single row of service data
+
+        Returns:
+            Dict: Service object with all attributes
+        """
+        # Extract reason codes
+        reason_codes = []
+        if 'Reason Cd' in row.index:
+            reason_cd = str(row['Reason Cd']).strip()
+            if reason_cd:
+                reason_codes = [reason_cd]
+
+        # Extract remark codes
+        remark_codes = []
+        if 'Remark Codes' in row.index:
+            remark_cd = str(row['Remark Codes']).strip()
+            if remark_cd:
+                remark_codes = [remark_cd]
+
+        # Clean claim status - remove parenthetical text
+        clm_sts = str(row.get('Clm Sts Cod', '')).strip()
+        if '(' in clm_sts:
+            clm_sts = clm_sts.split('(')[0].strip()
+
+        # Build service object - all values as strings to preserve Excel TEXT formatting
+        service = {
+            "clm_sts": clm_sts,
+            "posting_sts": str(row.get('Posting Sts', '')).strip(),
+            "cpt4": str(row.get('CPT4', '')).strip(),
+            "txn_status": str(row.get('Txn Status', '')).strip(),
+            "description": str(row.get('Description', '')).strip(),
+            "bill_amt": str(row.get('Bill Amt', '')).strip(),
+            "paid_amt": str(row.get('Pd Amt', '')).strip(),
+            "ded_amt": str(row.get('Ded Amt', '')).strip(),
+            "codes": reason_codes,
+            "remarks": remark_codes
+        }
+
+        return service
+
+    def get_data_object(self) -> Dict:
+        """
+        Get the created data object.
+
+        Returns:
+            Dict: Complete data object
+        """
+        return self.data_object
 
     def get_summary_stats(self) -> Dict:
         """
@@ -534,9 +476,315 @@ class ExcelDataProcessor:
         """
         stats = {
             'total_rows': len(self.df),
-            'total_eft_nums': len(self.get_all_eft_nums()),
+            'total_eft_nums': len(self.data_object),
             'columns': list(self.df.columns),
             'payer_name': self.payer_name
         }
 
         return stats
+
+
+class EncounterTagger:
+    """
+    Tags encounters in the data object based on review criteria.
+    Updates the data object with encounter tags and encs_to_check.
+    """
+
+    def __init__(self):
+        """Initialize the encounter tagger."""
+        self.encounter_tags = [
+            "22_no_123", "22_with_123", "appeal_has_adj", "chg_equal_adj",
+            "secondary_n408_pr96", "secondary_co94_oa94", "secondary_mc_tricare_dshs",
+            "tertiary", "enc_payer_not_found", "multiple_to_one", "other_not_posted",
+            "svc_no_match_clm"
+        ]
+
+    def tag_encounters(self, data_object: Dict) -> Dict:
+        """
+        Tag all encounters in the data object.
+
+        Args:
+            data_object (Dict): Complete data object with EFTs, payments, encounters
+
+        Returns:
+            Dict: Updated data object with encounter tags and encs_to_check
+        """
+        print(f"🏷️ Tagging encounters for review...")
+
+        for eft_num, eft in data_object.items():
+            print(f"   📊 Processing EFT: {eft_num}")
+
+            for payment_key, payment in eft["payments"].items():
+                encs_to_check = {}
+
+                for encounter_key, encounter in payment["encounters"].items():
+                    # Perform encounter analysis
+                    review_data = self.encounter_quick_check(payment, encounter, eft["payer"])
+
+                    if review_data:
+                        # Add tags to encounter
+                        encounter["tags"] = list(review_data["types"].keys())
+
+                        # Add to encs_to_check
+                        encs_to_check[encounter_key] = review_data
+
+                # Update payment with encs_to_check
+                payment["encs_to_check"] = encs_to_check
+
+        print(f"✅ Encounter tagging completed")
+        return data_object
+
+    def encounter_quick_check(self, payment: Dict, encounter: Dict, payer: str) -> Optional[Dict]:
+        """
+        Perform quick check analysis on a single encounter within a payment.
+
+        Args:
+            payment (Dict): Payment object with all encounters
+            encounter (Dict): Specific encounter to analyze
+            payer (str): Payer name from EFT
+
+        Returns:
+            Optional[Dict]: Analysis results for this specific encounter or None if no review needed
+        """
+        encounter_num = encounter["num"]
+
+        # Create all_encounters for payment encounters where encounter number matches
+        all_encounters = {}
+        for enc_key, enc_data in payment["encounters"].items():
+            if enc_data["num"] == encounter_num:
+                all_encounters[enc_key] = enc_data
+
+        # Filter encounters by claim status for the matching encounter number
+        recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] == "22"}
+        non_recoupment_encounters = {k: v for k, v in all_encounters.items() if v["status"] != "22"}
+
+        primary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                            if v["status"] in ["1", "19"]}
+        secondary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                              if v["status"] in ["2", "20"]}
+        tertiary_encounters = {k: v for k, v in non_recoupment_encounters.items()
+                             if v["status"].startswith("3") or v["status"] == "21"}
+
+        # Get services from each encounter type for the matching encounter number
+        recoupment_services = []
+        for enc in recoupment_encounters.values():
+            recoupment_services.extend(enc["services"])
+
+        primary_services = []
+        for enc in primary_encounters.values():
+            primary_services.extend(enc["services"])
+
+        secondary_services = []
+        for enc in secondary_encounters.values():
+            secondary_services.extend(enc["services"])
+
+        tertiary_services = []
+        for enc in tertiary_encounters.values():
+            tertiary_services.extend(enc["services"])
+
+        # Get CPT4 lists for comparison
+        primary_cpt4s = {svc["cpt4"] for svc in primary_services if svc["cpt4"]}
+        secondary_cpt4s = {svc["cpt4"] for svc in secondary_services if svc["cpt4"]}
+        tertiary_cpt4s = {svc["cpt4"] for svc in tertiary_services if svc["cpt4"]}
+        recoupment_cpt4s = {svc["cpt4"] for svc in recoupment_services if svc["cpt4"]}
+
+        # Analyze services in the specific encounter
+        encounter_tags_found = {}
+
+        for service in encounter["services"]:
+            enc_type = self._analyze_service(
+                service, payer, primary_cpt4s, secondary_cpt4s,
+                tertiary_cpt4s, recoupment_cpt4s
+            )
+
+            if enc_type:
+                if enc_type not in encounter_tags_found:
+                    encounter_tags_found[enc_type] = []
+                encounter_tags_found[enc_type].append(service["cpt4"])
+
+        # Return analysis for this specific encounter
+        if encounter_tags_found:
+            # Merge services by type (remove duplicates)
+            for enc_type in encounter_tags_found:
+                encounter_tags_found[enc_type] = list(set(encounter_tags_found[enc_type]))
+
+            return {
+                "num": encounter["num"],
+                "clm_status": encounter["status"],
+                "types": encounter_tags_found
+            }
+        else:
+            return None
+
+    def _analyze_service(self, service: Dict, payer: str, primary_cpt4s: set,
+                        secondary_cpt4s: set, tertiary_cpt4s: set, recoupment_cpt4s: set) -> Optional[str]:
+        """
+        Analyze a single service to determine encounter type tag.
+
+        Args:
+            service (Dict): Service object
+            payer (str): Payer name
+            primary_cpt4s (set): Set of primary service CPT4 codes
+            secondary_cpt4s (set): Set of secondary service CPT4 codes
+            tertiary_cpt4s (set): Set of tertiary service CPT4 codes
+            recoupment_cpt4s (set): Set of recoupment service CPT4 codes
+
+        Returns:
+            Optional[str]: Encounter type tag or None if no tag applies
+        """
+        description = service.get("description", "").strip()
+        posted_sts = service.get("posting_sts", "").strip()
+        clm_sts = service.get("clm_sts", "").strip()
+        cpt4 = service.get("cpt4", "").strip()
+        txn_status = service.get("txn_status", "").strip()
+        bill_amt = service.get("bill_amt", "").strip()
+        paid_amt = service.get("paid_amt", "").strip()
+        codes = service.get("codes", [])
+        remarks = service.get("remarks", [])
+
+        # HANDLE NOT POSTED
+        if description == "Encounter payer not found.":
+            return "enc_payer_not_found"
+
+        if description == "Charge mismatch on amount.":
+            return "multiple_to_one"
+
+        if description == "Multiple payments found for the same line item.":
+            return "multiple_to_one"
+
+        if description == "Service line payments do not sum to claim level payment.":
+            return "svc_no_match_clm"
+
+        if posted_sts == "Not Posted":
+            return "other_not_posted"
+
+        # HANDLE REPROCESSED
+        if clm_sts == "22":
+            all_other_cpt4s = primary_cpt4s | secondary_cpt4s | tertiary_cpt4s
+            if cpt4 in all_other_cpt4s:
+                return "22_with_123"
+            else:
+                return "22_no_123"
+
+        # HANDLE SECONDARY
+        if clm_sts != "22":
+            # Skip if there's a matching CPT4 in recoupment services
+            if cpt4 in recoupment_cpt4s:
+                return None
+
+            # Check for appeal with adjustment
+            if txn_status == "Appeal" and self._has_adjustment(service):
+                return "appeal_has_adj"
+
+            # Check for charge equal to adjustment (but not appeal)
+            if self._amounts_equal(bill_amt, self._get_adj_amt(service)) and txn_status != "Appeal":
+                return "chg_equal_adj"
+
+        # Secondary claim status specific checks
+        if clm_sts in ["2", "20"]:
+            # Check for N408 + PR96 + (CO45 or OA23)
+            if self._has_codes(codes + remarks, ["N408", "PR96"]) and \
+               self._has_codes(codes + remarks, ["CO45", "OA23"], any_match=True):
+                return "secondary_n408_pr96"
+
+            # Check for (CO94 or OA94) + (CO45 or OA23) + PR96
+            if self._has_codes(codes + remarks, ["CO94", "OA94"], any_match=True) and \
+               self._has_codes(codes + remarks, ["CO45", "OA23"], any_match=True) and \
+               self._has_codes(codes + remarks, ["PR96"]):
+                return "secondary_co94_oa94"
+
+            # Check for Medicare/Tricare/DSHS
+            if payer in ["Medicare", "Tricare", "DSHS"]:
+                return "secondary_mc_tricare_dshs"
+
+        # HANDLE TERTIARY
+        if clm_sts.startswith("3") or clm_sts == "21":
+            return "tertiary"
+
+        return None
+
+    def _has_adjustment(self, service: Dict) -> bool:
+        """Check if service has non-zero adjustment amount."""
+        adj_amt = self._get_adj_amt(service)
+        try:
+            return float(adj_amt) != 0.0
+        except (ValueError, TypeError):
+            return False
+
+    def _get_adj_amt(self, service: Dict) -> str:
+        """Get adjustment amount from service (placeholder - you may need to specify the field)."""
+        # You'll need to specify which field contains the adjustment amount
+        return service.get("adj_amt", "0")
+
+    def _amounts_equal(self, amount1: str, amount2: str) -> bool:
+        """Compare two string amounts for equality."""
+        try:
+            return float(amount1) == float(amount2)
+        except (ValueError, TypeError):
+            return False
+
+    def _has_codes(self, code_list: List[str], required_codes: List[str], any_match: bool = False) -> bool:
+        """
+        Check if required codes are present in the code list.
+
+        Args:
+            code_list (List[str]): List of codes to search in
+            required_codes (List[str]): List of required codes
+            any_match (bool): If True, any code match is sufficient; if False, all codes required
+
+        Returns:
+            bool: True if criteria is met
+        """
+        if any_match:
+            return any(code in code_list for code in required_codes)
+        else:
+            return all(code in code_list for code in required_codes)
+
+
+class PaymentTagger:
+    """
+    Tags payments and EFTs in the data object based on payment criteria.
+    Updates the data object with payment statuses and EFT split status.
+    """
+
+    def __init__(self):
+        """Initialize the payment tagger."""
+        pass
+
+    def tag_payments(self, data_object: Dict) -> Dict:
+        """
+        Tag all payments and EFTs in the data object.
+
+        Args:
+            data_object (Dict): Complete data object with tagged encounters
+
+        Returns:
+            Dict: Updated data object with payment statuses and EFT split status
+        """
+        print(f"🏷️ Tagging payments and EFTs...")
+
+        for eft_num, eft in data_object.items():
+            print(f"   📊 Processing EFT: {eft_num}")
+
+            # Tag EFT as split or not split based on number of payments
+            eft["is_split"] = len(eft["payments"]) > 1
+
+            # Tag each payment with status (placeholder for now)
+            for payment_key, payment in eft["payments"].items():
+                payment["status"] = self._determine_payment_status(payment)
+
+        print(f"✅ Payment and EFT tagging completed")
+        return data_object
+
+    def _determine_payment_status(self, payment: Dict) -> str:
+        """
+        Determine payment status based on criteria (placeholder).
+
+        Args:
+            payment (Dict): Payment object
+
+        Returns:
+            str: Payment status
+        """
+        # Placeholder - you'll provide the criteria later
+        return "NEEDS_REVIEW" if payment["encs_to_check"] else "OK"

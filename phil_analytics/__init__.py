@@ -7,7 +7,8 @@ scrubbing and validating payment data, and generating analytics reports.
 This library provides a complete pipeline for payment data processing including:
 - Combining multiple Excel files from payer folders
 - Scrubbing and validating payment data with business rules
-- Processing Excel data for detailed analytics
+- Creating structured data objects with EFT -> Payment -> Encounter -> Service hierarchy
+- Tagging encounters and payments for review requirements
 - Generating comprehensive analytics reports in GitHub-flavored markdown
 
 Example usage:
@@ -18,12 +19,12 @@ Example usage:
     Or use individual components:
     >>> from phil_analytics.combiner import ExcelCombiner
     >>> from phil_analytics.scrubber import DataCleaner
-    >>> from phil_analytics.excel_data_processor import ExcelDataProcessor
-    >>> from phil_analytics.analytics import AnalyticsGenerator
+    >>> from phil_analytics.excel_data_processor import ExcelDataObjectCreator
+    >>> from phil_analytics.markdown_generator import MarkdownGenerator
 """
 
 # Version information
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "PHIL Analytics Team"
 __description__ = "Payment data analytics and quality assurance pipeline"
 
@@ -31,7 +32,8 @@ __description__ = "Payment data analytics and quality assurance pipeline"
 try:
     from .combiner import ExcelCombiner
     from .scrubber import DataCleaner
-    from .excel_data_processor import ExcelDataProcessor
+    from .excel_data_processor import ExcelDataObjectCreator, EncounterTagger, PaymentTagger
+    from .markdown_generator import MarkdownGenerator
     from .pipeline import PhilPipeline
     from .exceptions import (
         PhilAnalyticsError,
@@ -55,7 +57,10 @@ __all__ = [
     # Individual component classes
     'ExcelCombiner',
     'DataCleaner',
-    'ExcelDataProcessor',
+    'ExcelDataObjectCreator',
+    'EncounterTagger',
+    'PaymentTagger',
+    'MarkdownGenerator',
 
     # Exception classes
     'PhilAnalyticsError',
@@ -117,7 +122,8 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
         >>> # Test run with limited files and combined output
         >>> result = quick_pipeline("Regence", max_files=3, save_combined=True)
         >>> print(f"Processed {result['file_summary']['total_rows']} rows")
-        >>> print(f"Found {result['excel_stats']['total_eft_nums']} EFTs")
+        >>> print(f"Found {result['data_object_stats']['total_eft_nums']} EFTs")
+        >>> print(f"Generated markdown: {result['markdown_file']}")
     """
     if PhilPipeline is None:
         raise ImportError("PhilPipeline could not be imported. Check your dependencies and file structure.")

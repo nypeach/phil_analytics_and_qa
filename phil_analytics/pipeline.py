@@ -10,7 +10,8 @@ import time
 from typing import Optional, Dict, Any
 from .combiner import ExcelCombiner
 from .scrubber import DataCleaner
-from .excel_data_processor import ExcelDataProcessor
+from .excel_data_processor import ExcelDataObjectCreator, EncounterTagger, PaymentTagger
+from .markdown_generator import MarkdownGenerator
 from .exceptions import PhilAnalyticsError
 from .utils import format_runtime
 
@@ -20,7 +21,7 @@ class PhilPipeline:
     Main pipeline orchestrator for PHIL Analytics processing.
 
     This class coordinates the full workflow from combining Excel files
-    through data cleaning, validation, and Excel processing.
+    through data cleaning, validation, and analytics generation.
     """
 
     def __init__(self, payer_folder: str, input_folder: Optional[str] = None,
@@ -35,6 +36,7 @@ class PhilPipeline:
             output_folder (str, optional): Override default output folder path
             mapping_file (str, optional): Override default mapping file path
             max_files (int, optional): Maximum number of files to process (for testing)
+            save_combined (bool): Whether to save a _combined.xlsx file for testing
         """
         print(f"🚀 Initializing PHIL Analytics Pipeline for: {payer_folder}")
         if max_files:
@@ -63,12 +65,16 @@ class PhilPipeline:
         # Initialize components
         self.combiner = None
         self.cleaner = None
-        self.excel_processor = None
+        self.data_object_creator = None
+        self.encounter_tagger = None
+        self.payment_tagger = None
+        self.markdown_generator = None
 
         # Results storage
         self.combined_data = None
         self.scrubbed_data = None
         self.scrubbed_file_path = None
+        self.data_object = None
 
         print(f"✅ Pipeline initialized successfully")
         print(f"   📁 Input folder: {self.input_folder}")
@@ -110,7 +116,7 @@ class PhilPipeline:
 
     def run_full_pipeline(self) -> Dict[str, Any]:
         """
-        Run the complete pipeline including combine, scrub, and Excel processing.
+        Run the complete pipeline including combine, scrub, and analytics generation.
 
         Returns:
             Dict[str, Any]: Results containing all data and statistics
@@ -128,8 +134,17 @@ class PhilPipeline:
             # Step 3: Save output
             self._save_scrubbed_output()
 
-            # Step 4: Process Excel for analytics
-            self._run_excel_processing_step()
+            # Step 4: Create data object
+            self._run_data_object_creation_step()
+
+            # Step 5: Tag encounters
+            self._run_encounter_tagging_step()
+
+            # Step 6: Tag payments
+            self._run_payment_tagging_step()
+
+            # Step 7: Generate markdown
+            self._run_markdown_generation_step()
 
             # Calculate total runtime
             total_end_time = time.time()
@@ -188,27 +203,64 @@ class PhilPipeline:
         step_runtime = step_end_time - step_start_time
         print(f"⏱️ File saving runtime: {format_runtime(step_runtime)}")
 
-    def _run_excel_processing_step(self) -> None:
-        """Run the Excel processing step to generate both markdown files."""
-        print(f"\n📊 Step 4: Processing Excel for analytics")
+    def _run_data_object_creation_step(self) -> None:
+        """Run the data object creation step."""
+        print(f"\n🏗️ Step 4: Creating data object")
         step_start_time = time.time()
 
-        # Process the scrubbed Excel file
+        # Create data object from scrubbed Excel file
         process_limit = self.max_files * 1000 if self.max_files else None  # Estimate rows based on files
-        self.excel_processor = ExcelDataProcessor(self.scrubbed_file_path, process_limit)
+        self.data_object_creator = ExcelDataObjectCreator(self.scrubbed_file_path, process_limit)
+        self.data_object = self.data_object_creator.create_data_object()
 
-        # Generate summary stats
-        stats = self.excel_processor.get_summary_stats()
-        print(f"   📋 Loaded {stats['total_rows']:,} rows with {stats['total_eft_nums']} EFTs")
-
-        # Generate and save both markdown files
-        markdown_files = self.excel_processor.save_both_markdown_files(self.output_folder)
-        print(f"   📝 Test logic markdown saved to: {os.path.basename(markdown_files['test_logic'])}")
-        print(f"   🏗️ Data structure markdown saved to: {os.path.basename(markdown_files['data_structure'])}")
+        # Get summary stats
+        stats = self.data_object_creator.get_summary_stats()
+        print(f"   📋 Created data object with {stats['total_eft_nums']} EFTs from {stats['total_rows']:,} rows")
 
         step_end_time = time.time()
         step_runtime = step_end_time - step_start_time
-        print(f"⏱️ Excel processing runtime: {format_runtime(step_runtime)}")
+        print(f"⏱️ Data object creation runtime: {format_runtime(step_runtime)}")
+
+    def _run_encounter_tagging_step(self) -> None:
+        """Run the encounter tagging step."""
+        print(f"\n🏷️ Step 5: Tagging encounters")
+        step_start_time = time.time()
+
+        self.encounter_tagger = EncounterTagger()
+        self.data_object = self.encounter_tagger.tag_encounters(self.data_object)
+
+        step_end_time = time.time()
+        step_runtime = step_end_time - step_start_time
+        print(f"⏱️ Encounter tagging runtime: {format_runtime(step_runtime)}")
+
+    def _run_payment_tagging_step(self) -> None:
+        """Run the payment tagging step."""
+        print(f"\n🏷️ Step 6: Tagging payments and EFTs")
+        step_start_time = time.time()
+
+        self.payment_tagger = PaymentTagger()
+        self.data_object = self.payment_tagger.tag_payments(self.data_object)
+
+        step_end_time = time.time()
+        step_runtime = step_end_time - step_start_time
+        print(f"⏱️ Payment tagging runtime: {format_runtime(step_runtime)}")
+
+    def _run_markdown_generation_step(self) -> None:
+        """Run the markdown generation step."""
+        print(f"\n📝 Step 7: Generating markdown")
+        step_start_time = time.time()
+
+        self.markdown_generator = MarkdownGenerator(self.payer_folder)
+        self.markdown_file_path = self.markdown_generator.generate_efts_markdown(self.data_object, self.output_folder)
+
+        # Get markdown stats
+        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object)
+        print(f"   📊 Generated markdown for {markdown_stats['total_efts']} EFTs")
+        print(f"   🔍 Found {markdown_stats['total_encounters_to_check']} encounters to check")
+
+        step_end_time = time.time()
+        step_runtime = step_end_time - step_start_time
+        print(f"⏱️ Markdown generation runtime: {format_runtime(step_runtime)}")
 
     def _get_pipeline_results(self, total_runtime: float) -> Dict[str, Any]:
         """
@@ -234,7 +286,7 @@ class PhilPipeline:
 
     def _get_full_pipeline_results(self, total_runtime: float) -> Dict[str, Any]:
         """
-        Get comprehensive pipeline results including Excel processing.
+        Get comprehensive pipeline results including all processing steps.
 
         Args:
             total_runtime (float): Total pipeline runtime in seconds
@@ -242,20 +294,21 @@ class PhilPipeline:
         Returns:
             Dict[str, Any]: Full pipeline results and statistics
         """
+        # Get markdown stats
+        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object) if self.markdown_generator else {}
+
         results = {
             'payer_folder': self.payer_folder,
             'total_runtime': total_runtime,
             'scrubbed_data': self.scrubbed_data,
-            'excel_processor': self.excel_processor,
+            'data_object': self.data_object,
             'file_summary': self.combiner.get_file_summary() if self.combiner else {},
             'cleaning_stats': self.cleaner.get_cleaning_stats() if self.cleaner else {},
-            'excel_stats': self.excel_processor.get_summary_stats() if self.excel_processor else {},
+            'data_object_stats': self.data_object_creator.get_summary_stats() if self.data_object_creator else {},
+            'markdown_stats': markdown_stats,
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
-            'markdown_files': {
-                'test_logic': os.path.join(self.output_folder, f"{self.payer_folder}_efts.md"),
-                'data_structure': os.path.join(self.output_folder, f"{self.payer_folder}_data_structure.md")
-            }
+            'markdown_file': getattr(self, 'markdown_file_path', ''),
         }
 
         return results
@@ -283,9 +336,10 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
     print(f"   • Files processed: {results['file_summary'].get('total_files', 'Unknown')}")
     print(f"   • Total rows: {results['file_summary'].get('total_rows', 'Unknown'):,}")
     print(f"   • Bad rows removed: {results['cleaning_stats'].get('bad_rows_removed', 0):,}")
-    print(f"   • EFTs found: {results['excel_stats'].get('total_eft_nums', 0)}")
+    print(f"   • EFTs found: {results['data_object_stats'].get('total_eft_nums', 0)}")
+    print(f"   • Split EFTs: {results['markdown_stats'].get('split_efts', 0)}")
+    print(f"   • Encounters to check: {results['markdown_stats'].get('total_encounters_to_check', 0)}")
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")
-    print(f"   • Test logic markdown: {results['markdown_files']['test_logic']}")
-    print(f"   • Data structure markdown: {results['markdown_files']['data_structure']}")
+    print(f"   • Markdown file: {results['markdown_file']}")
 
     return results
