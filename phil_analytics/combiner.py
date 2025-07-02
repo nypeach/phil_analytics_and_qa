@@ -1,14 +1,16 @@
 """
-PHIL Analytics and QA Library - Excel File Combiner
+PHIL Analytics and QA Library - Excel File Combiner with JSON Support
 
 This module replicates the exact logic from combine_xlsx_files.py but returns
-a DataFrame instead of saving to a file.
+a DataFrame instead of saving to a file. Also includes JSON combination functionality.
 """
 
 import os
 import pandas as pd
+import json
 from openpyxl import load_workbook
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Dict, List
 from .exceptions import FileNotFoundError, ValidationError, DataProcessingError
 
 
@@ -321,3 +323,378 @@ class ExcelCombiner:
                 operation="excel_save",
                 output_file=output_file
             )
+
+
+class JsonCombiner:
+    """
+    Combines multiple JSON files from a specified folder into a single combined JSON file.
+
+    This class handles JSON files that contain remittance data and combines them
+    into a single file for easier processing and updates to "Not Posted" services.
+    """
+
+    def __init__(self, input_folder: str, output_folder: str, file_name: str):
+        """
+        Initialize the JSON combiner.
+
+        Args:
+            input_folder (str): Path to folder containing JSON files
+            output_folder (str): Path to folder for output
+            file_name (str): Base name for combined file (without extension)
+        """
+        print(f"🔧 Initializing JSON combiner for folder: {input_folder}")
+
+        self.input_folder = input_folder
+        self.output_folder = output_folder
+        self.file_name = file_name
+        self.combined_data = {}
+        self.file_count = 0
+
+        # Ensure folders exist
+        if not os.path.exists(input_folder):
+            raise FileNotFoundError(
+                input_folder,
+                file_type="JSON input folder",
+                expected_location="Current working directory or specified path"
+            )
+
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            print(f"📁 Created output folder: {output_folder}")
+
+        print(f"✅ JSON combiner initialized successfully")
+
+    def get_json_files(self) -> List[str]:
+        """
+        Get list of JSON files in the input folder.
+
+        Returns:
+            List[str]: List of JSON file names
+        """
+        print(f"📁 Scanning folder for JSON files...")
+
+        json_files = []
+        for file_name in os.listdir(self.input_folder):
+            if file_name.endswith(".json") and not file_name.startswith("."):
+                json_files.append(file_name)
+
+        if not json_files:
+            print(f"⚠️ No JSON files found in folder: {self.input_folder}")
+            return []
+
+        print(f"📋 Found {len(json_files)} JSON files to process")
+        for i, file_name in enumerate(json_files, 1):
+            print(f"   {i}. {file_name}")
+
+        return json_files
+
+    def combine_json_files(self) -> Dict:
+        """
+        Combine all JSON files in the input folder.
+
+        Returns:
+            Dict: Combined JSON data
+        """
+        print(f"🚀 Starting JSON file combination process...")
+
+        json_files = self.get_json_files()
+
+        if not json_files:
+            print(f"ℹ️ No JSON files to combine")
+            return {}
+
+        combined_data = {}
+
+        print(f"🔄 Processing {len(json_files)} JSON files...")
+
+        for file_name in json_files:
+            file_path = os.path.join(self.input_folder, file_name)
+            print(f"📄 Processing: {file_name}")
+
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+
+                # Merge the data - each JSON file may contain multiple remittance records
+                if isinstance(file_data, dict):
+                    combined_data.update(file_data)
+                elif isinstance(file_data, list):
+                    # If it's a list, convert to dict with index as key
+                    for i, item in enumerate(file_data):
+                        combined_data[f"{file_name}_{i}"] = item
+
+                self.file_count += 1
+                print(f"   ✅ Successfully processed {file_name}")
+
+            except json.JSONDecodeError as e:
+                print(f"   ❌ JSON decode error in {file_name}: {e}")
+                continue
+            except Exception as e:
+                print(f"   ❌ Failed to process {file_name}: {e}")
+                continue
+
+        self.combined_data = combined_data
+
+        print(f"✅ JSON combination completed successfully!")
+        print(f"   📊 Total files processed: {self.file_count}")
+        print(f"   📈 Total remittance records: {len(combined_data)}")
+
+        return combined_data
+
+    def save_combined_json(self) -> str:
+        """
+        Save the combined JSON data to output file.
+
+        Returns:
+            str: Path to saved file
+        """
+        if not self.combined_data:
+            print(f"⚠️ No data to save")
+            return ""
+
+        output_file = os.path.join(self.output_folder, f"{self.file_name}_combined.json")
+
+        print(f"💾 Saving combined JSON to: {output_file}")
+
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(self.combined_data, f, indent=2, ensure_ascii=False)
+
+            print(f"   ✅ Combined JSON saved successfully!")
+            print(f"   📁 File location: {output_file}")
+            print(f"   📊 Records saved: {len(self.combined_data):,}")
+
+            return output_file
+
+        except Exception as e:
+            raise DataProcessingError(
+                f"Failed to save combined JSON file: {e}",
+                operation="json_save",
+                output_file=output_file
+            )
+
+    def run_combination(self) -> str:
+        """
+        Run the complete JSON combination process.
+
+        Returns:
+            str: Path to combined JSON file
+        """
+        self.combine_json_files()
+        return self.save_combined_json()
+
+
+def transform_json_service_to_data_object(json_service: Dict, json_claim: Dict) -> Dict:
+    """
+    Transform JSON service structure to match our data object service format.
+
+    Args:
+        json_service (Dict): Service data from JSON
+        json_claim (Dict): Claim data from JSON (for context)
+
+    Returns:
+        Dict: Service object in our data format
+    """
+    # Build codes string from JSON adjustments
+    codes_parts = []
+
+    for adj in json_service.get("adjustments", []):
+        for code, amount in adj.items():
+            if code.startswith(("CO", "CR", "OA", "PI", "PR")):
+                # Format: "CO253 (Description) -$amount"
+                # For now, we'll use placeholder description since JSON doesn't include it
+                codes_parts.append(f"{code} () -${amount}")
+
+    codes_string = "; ".join(codes_parts)
+
+    # Handle remarks (JSON remarks are typically empty based on your example)
+    remarks = []
+    for remark in json_service.get("remarks", []):
+        if isinstance(remark, str):
+            remarks.append(remark)
+        elif isinstance(remark, dict):
+            remarks.extend(remark.keys())
+
+    # Transform to our data object format
+    service_obj = {
+        "clm_sts": str(json_claim.get("clm_status", "")).strip(),
+        "posting_sts": "Not Posted",  # We're only updating Not Posted services
+        "cpt4": str(json_service.get("proc", "")).strip(),
+        "txn_status": "",  # Not available in JSON
+        "description": "",  # Not available in JSON
+        "bill_amt": str(json_service.get("billed", "0.00")).strip(),
+        "paid_amt": str(json_service.get("prov_pd", "0.00")).strip(),
+        "ded_amt": "",  # May need to calculate from adjustments
+        "codes": codes_string,  # Now a formatted string
+        "remarks": remarks
+    }
+
+    return service_obj
+
+
+def update_service_codes_from_json(current_codes: str, json_adjustments: List[Dict]) -> str:
+    """
+    Update service codes string with new adjustments from JSON.
+    - Add codes that aren't already present
+    - Override amounts of codes with the JSON amount if the values are different
+
+    Args:
+        current_codes (str): Current codes string like "CO253 (Desc) -$0.26; CO45 (Desc) -$68.94"
+        json_adjustments (List[Dict]): JSON adjustments like [{"CO253": "1532.90", "CO45": "68.94"}]
+
+    Returns:
+        str: Updated codes string
+    """
+    # Parse existing codes and their amounts
+    existing_codes = {}
+    remaining_parts = []
+
+    if current_codes:
+        parts = current_codes.split(";")
+        for part in parts:
+            part = part.strip()
+            if part:
+                # Extract code name (everything before the first space)
+                space_idx = part.find(" ")
+                if space_idx > 0:
+                    code = part[:space_idx].strip()
+                    existing_codes[code] = part  # Keep full formatted string
+                else:
+                    # Malformed part, keep as is
+                    remaining_parts.append(part)
+
+    # Process JSON adjustments
+    json_codes = {}
+    for adj in json_adjustments:
+        for code, amount in adj.items():
+            if code.startswith(("CO", "CR", "OA", "PI", "PR")):
+                json_codes[code] = str(amount).strip()
+
+    # Build updated codes list
+    updated_parts = []
+
+    # Handle existing codes
+    for code, formatted_string in existing_codes.items():
+        if code in json_codes:
+            # Code exists in both - check if amount is different
+            json_amount = json_codes[code]
+
+            # Extract current amount from formatted string
+            # Look for -$ pattern
+            dollar_idx = formatted_string.find("-$")
+            if dollar_idx > 0:
+                current_amount = formatted_string[dollar_idx + 2:].strip()
+                # Remove any trailing semicolon or other characters
+                current_amount = current_amount.split(";")[0].strip()
+
+                if current_amount != json_amount:
+                    # Override with JSON amount, preserve description
+                    desc_part = formatted_string[:dollar_idx].strip()
+                    updated_parts.append(f"{desc_part} -${json_amount}")
+                    print(f"   📝 Updated {code} amount: {current_amount} → {json_amount}")
+                else:
+                    # Keep existing
+                    updated_parts.append(formatted_string)
+            else:
+                # Malformed existing string, use JSON format
+                updated_parts.append(f"{code} () -${json_amount}")
+
+            # Remove from json_codes so we don't add it again
+            del json_codes[code]
+        else:
+            # Code only exists in current, keep as is
+            updated_parts.append(formatted_string)
+
+    # Add any remaining parts that weren't codes
+    updated_parts.extend(remaining_parts)
+
+    # Add new codes from JSON
+    for code, amount in json_codes.items():
+        updated_parts.append(f"{code} () -${amount}")
+        print(f"   📝 Added new code: {code} -${amount}")
+
+    return "; ".join(updated_parts)
+
+
+def compare_and_update_service(current_service: Dict, json_service_data: Dict) -> Dict:
+    """
+    Compare current service with JSON data and update if different.
+    Only updates services with posting_sts = "Not Posted".
+
+    Args:
+        current_service (Dict): Current service from our data object
+        json_service_data (Dict): JSON service data with service, claim, remit
+
+    Returns:
+        Dict: Updated service object
+    """
+    # Only update if posting status is "Not Posted"
+    if current_service.get("posting_sts", "").strip() != "Not Posted":
+        return current_service
+
+    json_service = json_service_data["service"]
+    json_claim = json_service_data["claim"]
+
+    # Create updated service
+    updated_service = current_service.copy()
+
+    # Update amounts if different
+    json_bill_amt = str(json_service.get("billed", "0.00")).strip()
+    json_paid_amt = str(json_service.get("prov_pd", "0.00")).strip()
+
+    if updated_service.get("bill_amt", "").strip() != json_bill_amt:
+        print(f"   📝 Updating bill_amt: {updated_service.get('bill_amt')} → {json_bill_amt}")
+        updated_service["bill_amt"] = json_bill_amt
+
+    if updated_service.get("paid_amt", "").strip() != json_paid_amt:
+        print(f"   📝 Updating paid_amt: {updated_service.get('paid_amt')} → {json_paid_amt}")
+        updated_service["paid_amt"] = json_paid_amt
+
+    # Update codes if different
+    current_codes = updated_service.get("codes", "")
+    updated_codes = update_service_codes_from_json(current_codes, json_service.get("adjustments", []))
+
+    if current_codes != updated_codes:
+        print(f"   📝 Updating codes:")
+        print(f"      Old: {current_codes}")
+        print(f"      New: {updated_codes}")
+        updated_service["codes"] = updated_codes
+
+    return updated_service
+
+
+def find_matching_json_data(encounter_num: str, claim_status: str, cpt4: str,
+                          combined_json: Dict) -> Optional[Dict]:
+    """
+    Find matching JSON service data for a given encounter and CPT4.
+
+    Args:
+        encounter_num (str): Encounter number to match (corresponds to claim.number)
+        claim_status (str): Claim status to match
+        cpt4 (str): CPT4 code to match
+        combined_json (Dict): Combined JSON data
+
+    Returns:
+        Optional[Dict]: Matching service data or None if not found
+    """
+    # Search through all remittance records
+    for remit_key, remit_data in combined_json.items():
+        claims = remit_data.get("claims", [])
+
+        for claim in claims:
+            # Match by claim number (corresponds to encounter number)
+            claim_number = str(claim.get("number", "")).strip()
+            claim_status_json = str(claim.get("clm_status", "")).strip()
+
+            if claim_number == encounter_num and claim_status_json == claim_status:
+                # Look for matching service
+                for service in claim.get("services", []):
+                    service_cpt4 = str(service.get("proc", "")).strip()
+                    if service_cpt4 == cpt4:
+                        return {
+                            "service": service,
+                            "claim": claim,
+                            "remit": remit_data
+                        }
+
+    return None

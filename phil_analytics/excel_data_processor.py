@@ -301,7 +301,13 @@ class ExcelDataProcessor:
             eft_num (str): EFT number
             markdown_content (List[str]): List to append markdown content to
         """
-        eft_title = f"EFT: {eft_num} (Payer: {eft['payer']}, Split: {eft['is_split']}, Payments: {len(eft['payments'])})"
+        # Calculate total encounters to check across all payments in this EFT
+        total_encs_to_check = 0
+        for payment in eft["payments"].values():
+            encs_to_check = payment.get("encs_to_check", {})
+            total_encs_to_check += len(encs_to_check)
+
+        eft_title = f"EFT: {eft_num} (Payer: {eft['payer']}, Payments: {len(eft['payments'])}, Encs To Check: {total_encs_to_check})"
         markdown_content.append(f"<details markdown=\"1\">\n<summary>{eft_title}</summary>\n\n")
 
         # Payment level
@@ -331,9 +337,51 @@ class ExcelDataProcessor:
 
             # Encounters section - only show encounters that need review
             encs_to_check = payment.get("encs_to_check", {})
-            encounters_title = f"Encounters ({len(encs_to_check)})"
+            encounters_title = f"Encounters to Check ({len(encs_to_check)})"
             markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
 
+            if encs_to_check:
+                for enc_key, enc_check_data in encs_to_check.items():
+                    # Count number of types to check for this encounter
+                    review_count = len(enc_check_data['types'])
+
+                    encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Review: {review_count})"
+                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
+
+                    # Add encounter analysis summary
+                    for enc_type, cpt4_list in enc_check_data['types'].items():
+                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                        markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
+
+                    markdown_content.append("\n</details>\n\n")
+            else:
+                markdown_content.append("No encounters require review.\n\n")
+
+            # COMMENTED OUT - Previous structures (keep for later use)
+            """
+            # Type-grouped structure
+            if encs_to_check:
+                # Group encounters by type
+                encounters_by_type = {}
+                for enc_key, enc_check_data in encs_to_check.items():
+                    for enc_type, cpt4_list in enc_check_data['types'].items():
+                        if enc_type not in encounters_by_type:
+                            encounters_by_type[enc_type] = []
+
+                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                        enc_display = f"{enc_check_data['num']}_{enc_check_data['clm_status']}: {cpt4_str}"
+                        encounters_by_type[enc_type].append(enc_display)
+
+                # Generate sections for each type
+                for enc_type, encounter_list in encounters_by_type.items():
+                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{enc_type}</summary>\n\n")
+
+                    for encounter_display in encounter_list:
+                        markdown_content.append(f"- {encounter_display}\n")
+
+                    markdown_content.append("\n</details>\n\n")
+
+            # Original individual encounter structure with service count
             if encs_to_check:
                 for enc_key, enc_check_data in encs_to_check.items():
                     # Get full encounter data for service count
@@ -343,16 +391,14 @@ class ExcelDataProcessor:
                     encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Services: {service_count})"
                     markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
 
-                    # Add encounter analysis summary
-                    markdown_content.append("**Review Required:**\n")
+                    # Add encounter analysis summary without header
                     for enc_type, cpt4_list in enc_check_data['types'].items():
                         cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
                         markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
                     markdown_content.append("\n")
 
                     markdown_content.append("</details>\n\n")
-            else:
-                markdown_content.append("No encounters require review.\n\n")
+            """
 
             markdown_content.append("</details>\n\n")
             markdown_content.append("</details>\n\n")
