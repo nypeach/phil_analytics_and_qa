@@ -8,7 +8,7 @@ Creates data objects with EFT -> Payment -> Encounter -> Service hierarchy.
 import pandas as pd
 import openpyxl
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 from collections import defaultdict
 import re
 
@@ -395,130 +395,6 @@ class ExcelDataObjectCreator:
             print(f"   ❌ Error parsing file name '{file_name}': {e}")
             return "", "", 0.0
 
-    def _calculate_payment_amount(self, pmt_rows: pd.DataFrame) -> float:
-        """
-        DEPRECATED: This method is no longer used since payment amount is extracted from File column.
-        Kept for backward compatibility but should not be called.
-
-        Args:
-            pmt_rows (pd.DataFrame): All rows for this payment
-
-        Returns:
-            float: Total payment amount
-        """
-        print(f"   ⚠️ Warning: _calculate_payment_amount() is deprecated - use _parse_file_column() instead")
-        return 0.0
-
-    def _extract_amount_from_file_name(self, file_name: str) -> Optional[float]:
-        """
-        DEPRECATED: This method is no longer used since parsing is handled in _parse_file_column().
-        Kept for backward compatibility but should not be called.
-
-        Args:
-            file_name (str): File name to parse
-
-        Returns:
-            Optional[float]: Extracted amount or None if parsing fails
-        """
-        print(f"   ⚠️ Warning: _extract_amount_from_file_name() is deprecated - use _parse_file_column() instead")
-        return None
-
-    def _calculate_payment_amount(self, pmt_rows: pd.DataFrame) -> float:
-        """
-        Calculate the total payment amount for this payment by parsing the File column.
-
-        File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
-        Example: 207008_SB542_35.03_1525153B100018112000_ACH_20250603
-        Example: 207008_SB542_-35.03_1525153B100018112000_ACH_20250603
-
-        Args:
-            pmt_rows (pd.DataFrame): All rows for this payment
-
-        Returns:
-            float: Total payment amount extracted from File column
-        """
-        # Try to get the payment amount from the File column
-        if 'File' in pmt_rows.columns:
-            try:
-                # Get unique file names for this payment (should be the same for all rows in the payment)
-                file_names = pmt_rows['File'].astype(str).str.strip()
-                file_names = file_names[file_names != '']  # Remove empty values
-
-                if len(file_names) > 0:
-                    # Parse the first file name to extract the amount
-                    file_name = file_names.iloc[0]
-                    payment_amount = self._extract_amount_from_file_name(file_name)
-                    if payment_amount is not None:
-                        return payment_amount
-            except (ValueError, TypeError):
-                pass
-
-        # Fallback: Try to get the payment amount from the Chk Amt column if it exists
-        if 'Chk Amt' in pmt_rows.columns:
-            try:
-                # Get unique check amounts for this payment (should be the same for all rows in the payment)
-                chk_amts = pmt_rows['Chk Amt'].astype(str).str.strip()
-                chk_amts = chk_amts[chk_amts != '']  # Remove empty values
-
-                if len(chk_amts) > 0:
-                    # Convert to float and take the first value (they should all be the same)
-                    chk_amt = float(chk_amts.iloc[0])
-                    return chk_amt
-            except (ValueError, TypeError):
-                pass
-
-        # Second fallback: sum of all paid amounts in this payment
-        if 'Pd Amt' in pmt_rows.columns:
-            try:
-                pd_amts = pmt_rows['Pd Amt'].astype(str).str.strip()
-                pd_amts = pd_amts[pd_amts != '']  # Remove empty values
-
-                total_paid = 0.0
-                for amt_str in pd_amts:
-                    try:
-                        total_paid += float(amt_str)
-                    except (ValueError, TypeError):
-                        continue
-
-                return total_paid
-            except:
-                pass
-
-        # Default to 0.0 if we can't calculate the amount
-        return 0.0
-
-    def _extract_amount_from_file_name(self, file_name: str) -> Optional[float]:
-        """
-        Extract the payment amount from the file name.
-
-        File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
-        Examples:
-        - 207008_SB542_35.03_1525153B100018112000_ACH_20250603 → 35.03
-        - 207008_SB542_-35.03_1525153B100018112000_ACH_20250603 → -35.03
-
-        Args:
-            file_name (str): File name to parse
-
-        Returns:
-            Optional[float]: Extracted amount or None if parsing fails
-        """
-        try:
-            # Split by underscore to get file parts
-            parts = file_name.split('_')
-
-            # We expect at least 6 parts: WS_ID, WAYSTAR_ID, AMT, CHK_NBR, TYPE, FILE_DATE
-            if len(parts) >= 3:
-                # The amount should be in the third position (index 2)
-                amount_str = parts[2].strip()
-
-                # Convert to float (handles both positive and negative amounts)
-                return float(amount_str)
-
-        except (ValueError, TypeError, IndexError) as e:
-            print(f"   ⚠️ Warning: Could not parse amount from file name '{file_name}': {e}")
-
-        return None
-
     def _calculate_pla_amounts(self, pla_rows: pd.DataFrame) -> Dict[str, float]:
         """
         Calculate PLA amounts from PLA rows with reverse logic.
@@ -827,6 +703,281 @@ class ExcelDataObjectCreator:
         return stats
 
 
+class AnalyticsProcessor:
+    """
+    Processes the final data object to generate specific analytics insights.
+    Analyzes Mixed Post payments and encounters for targeted review requirements.
+    """
+
+    def __init__(self):
+        """Initialize the analytics processor."""
+        self.analytics_results = {}
+
+    def analyze_mixed_post_payments(self, data_object: Dict) -> Dict:
+        """
+        Analyze Mixed Post payments to find specific scenarios for review.
+
+        Args:
+            data_object (Dict): Complete data object with tagged payments and encounters
+
+        Returns:
+            Dict: Analytics results with specific Mixed Post scenarios
+        """
+        print(f"📊 Analyzing Mixed Post payments for specific scenarios...")
+
+        # Initialize results structure
+        results = {
+            "mixed_post_no_plas": [],
+            "mixed_post_l6_only": [],
+            "charge_mismatch_cpt4_encounters": [],
+            "max_encounters_analysis": {
+                "not_split_single_payment": None,
+                "split_single_eft": None
+            }
+        }
+
+        # Process all EFTs and payments
+        for eft_num, eft in data_object.items():
+            # Only analyze not-split EFTs (single payment per EFT)
+            if not eft.get("is_split", False):
+                for payment_key, payment in eft["payments"].items():
+                    # Only analyze Mixed Post payments
+                    if payment.get("status") == "Mixed Post":
+                        # Check PLA conditions
+                        has_l6_plas = len(payment["plas"]["pla_l6"]) > 0
+                        has_other_plas = len(payment["plas"]["pla_other"]) > 0
+                        has_no_plas = not has_l6_plas and not has_other_plas
+                        has_only_l6_plas = has_l6_plas and not has_other_plas
+
+                        encs_to_check_count = len(payment.get("encs_to_check", {}))
+
+                        # Create payment info for analysis
+                        payment_info = {
+                            "eft_num": eft_num,
+                            "practice_id": payment["practice_id"],
+                            "payment_num": payment["num"],
+                            "payment_amount": payment["amt"],
+                            "encs_to_check_count": encs_to_check_count,
+                            "total_encounters": len(payment.get("encounters", {})),
+                            "pla_l6_count": len(payment["plas"]["pla_l6"]),
+                            "pla_other_count": len(payment["plas"]["pla_other"]),
+                            "payment_status": payment.get("status"),
+                            "encounters_to_check": payment.get("encs_to_check", {})
+                        }
+
+                        # Scenario 1: Mixed Post with no PLAs
+                        if has_no_plas:
+                            results["mixed_post_no_plas"].append(payment_info)
+
+                        # Scenario 2: Mixed Post with only L6 PLAs
+                        if has_only_l6_plas:
+                            results["mixed_post_l6_only"].append(payment_info)
+
+                        # Check for "Charge mismatch on CPT4" encounters in this payment
+                        self._analyze_charge_mismatch_encounters(payment, payment_info, results)
+
+        # Sort results and find extremes
+        self._process_analytics_results(results)
+
+        # Analyze max encounters across all EFTs and payments
+        self._analyze_max_encounters(data_object, results)
+
+        self.analytics_results = results
+        print(f"✅ Mixed Post analytics completed")
+        return results
+
+    def _analyze_charge_mismatch_encounters(self, payment: Dict, payment_info: Dict, results: Dict) -> None:
+        """
+        Analyze encounters in a payment for "Charge mismatch on CPT4" scenarios.
+
+        Args:
+            payment (Dict): Payment object
+            payment_info (Dict): Payment information for tracking
+            results (Dict): Results dictionary to update
+        """
+        encs_to_check = payment.get("encs_to_check", {})
+
+        for enc_key, enc_check_data in encs_to_check.items():
+            encounter_types = enc_check_data.get("types", {})
+
+            # Check if this encounter has "chg_mismatch_cpt4" type
+            if "chg_mismatch_cpt4" in encounter_types:
+                encounter_info = {
+                    "eft_num": payment_info["eft_num"],
+                    "practice_id": payment_info["practice_id"],
+                    "payment_num": payment_info["payment_num"],
+                    "payment_amount": payment_info["payment_amount"],
+                    "encounter_num": enc_check_data["num"],
+                    "encounter_status": enc_check_data["clm_status"],
+                    "encounter_key": enc_key,
+                    "encs_to_check_count": payment_info["encs_to_check_count"],
+                    "cpt4_codes": encounter_types.get("chg_mismatch_cpt4", [])
+                }
+
+                results["charge_mismatch_cpt4_encounters"].append(encounter_info)
+
+    def _analyze_max_encounters(self, data_object: Dict, results: Dict) -> None:
+        """
+        Find the payment/EFT with the maximum encounters to check across different categories.
+
+        Args:
+            data_object (Dict): Complete data object
+            results (Dict): Results dictionary to update
+        """
+        max_not_split_payment = None
+        max_split_eft = None
+
+        # Process all EFTs
+        for eft_num, eft in data_object.items():
+            if eft.get("is_split", False):
+                # Split EFT - calculate total encounters to check across all payments
+                total_encs_to_check = 0
+                for payment in eft["payments"].values():
+                    total_encs_to_check += len(payment.get("encs_to_check", {}))
+
+                if total_encs_to_check > 0:
+                    eft_info = {
+                        "eft_num": eft_num,
+                        "total_encs_to_check": total_encs_to_check,
+                        "payment_count": len(eft["payments"]),
+                        "payments": []
+                    }
+
+                    # Add ALL payment details (not just those with encounters to check)
+                    for payment in eft["payments"].values():
+                        payment_encs = len(payment.get("encs_to_check", {}))
+                        eft_info["payments"].append({
+                            "practice_id": payment["practice_id"],
+                            "payment_num": payment["num"],
+                            "encs_to_check": payment_encs,
+                            "status": payment.get("status", "Unknown"),
+                            "pla_l6_count": len(payment["plas"]["pla_l6"]),
+                            "pla_other_count": len(payment["plas"]["pla_other"])
+                        })
+
+                    if max_split_eft is None or total_encs_to_check > max_split_eft["total_encs_to_check"]:
+                        max_split_eft = eft_info
+            else:
+                # Not split EFT - single payment
+                for payment in eft["payments"].values():
+                    encs_to_check_count = len(payment.get("encs_to_check", {}))
+                    if encs_to_check_count > 0:
+                        payment_info = {
+                            "eft_num": eft_num,
+                            "practice_id": payment["practice_id"],
+                            "payment_num": payment["num"],
+                            "encs_to_check_count": encs_to_check_count,
+                            "total_encounters": len(payment.get("encounters", {})),
+                            "payment_status": payment.get("status", "Unknown"),
+                            "pla_l6_count": len(payment["plas"]["pla_l6"]),
+                            "pla_other_count": len(payment["plas"]["pla_other"])
+                        }
+
+                        if max_not_split_payment is None or encs_to_check_count > max_not_split_payment["encs_to_check_count"]:
+                            max_not_split_payment = payment_info
+
+        # Store results
+        results["max_encounters_analysis"]["not_split_single_payment"] = max_not_split_payment
+        results["max_encounters_analysis"]["split_single_eft"] = max_split_eft
+
+    def _process_analytics_results(self, results: Dict) -> None:
+        """
+        Process and sort analytics results to find the largest and smallest scenarios.
+
+        Args:
+            results (Dict): Results dictionary to process
+        """
+        # Sort Mixed Post with no PLAs by encounters to check count (descending)
+        results["mixed_post_no_plas"].sort(key=lambda x: x["encs_to_check_count"], reverse=True)
+
+        # Sort Mixed Post with only L6 PLAs by encounters to check count (descending)
+        results["mixed_post_l6_only"].sort(key=lambda x: x["encs_to_check_count"], reverse=True)
+
+        # Sort charge mismatch encounters by encounters to check count (ascending for smallest)
+        results["charge_mismatch_cpt4_encounters"].sort(key=lambda x: x["encs_to_check_count"])
+
+        # Add summary statistics
+        results["summary"] = {
+            "mixed_post_no_plas_count": len(results["mixed_post_no_plas"]),
+            "mixed_post_l6_only_count": len(results["mixed_post_l6_only"]),
+            "charge_mismatch_cpt4_count": len(results["charge_mismatch_cpt4_encounters"]),
+            "largest_no_plas_encs": results["mixed_post_no_plas"][0]["encs_to_check_count"] if results["mixed_post_no_plas"] else 0,
+            "largest_l6_only_encs": results["mixed_post_l6_only"][0]["encs_to_check_count"] if results["mixed_post_l6_only"] else 0,
+            "smallest_charge_mismatch_encs": results["charge_mismatch_cpt4_encounters"][0]["encs_to_check_count"] if results["charge_mismatch_cpt4_encounters"] else 0
+        }
+
+    def get_analytics_results(self) -> Dict:
+        """
+        Get the analytics results.
+
+        Returns:
+            Dict: Complete analytics results
+        """
+        return self.analytics_results
+
+    def print_analytics_summary(self) -> None:
+        """Print a summary of the analytics results."""
+        if not self.analytics_results:
+            print("❌ No analytics results available. Run analyze_mixed_post_payments() first.")
+            return
+
+        results = self.analytics_results
+        summary = results.get("summary", {})
+
+        print(f"\n📊 Mixed Post Analytics Summary:")
+        print(f"   • Mixed Post with No PLAs: {summary.get('mixed_post_no_plas_count', 0)} payments")
+        if summary.get('largest_no_plas_encs', 0) > 0:
+            print(f"     └─ Largest encounters to check: {summary.get('largest_no_plas_encs', 0)}")
+
+        print(f"   • Mixed Post with L6 PLAs Only: {summary.get('mixed_post_l6_only_count', 0)} payments")
+        if summary.get('largest_l6_only_encs', 0) > 0:
+            print(f"     └─ Largest encounters to check: {summary.get('largest_l6_only_encs', 0)}")
+
+        print(f"   • Charge Mismatch CPT4 Encounters: {summary.get('charge_mismatch_cpt4_count', 0)} encounters")
+        if summary.get('smallest_charge_mismatch_encs', 0) > 0:
+            print(f"     └─ Smallest encounters to check: {summary.get('smallest_charge_mismatch_encs', 0)}")
+
+        # Show max encounters analysis
+        max_analysis = results.get("max_encounters_analysis", {})
+        if max_analysis.get("not_split_single_payment"):
+            max_not_split = max_analysis["not_split_single_payment"]
+            print(f"\n🔍 Max Encounters (Not Split - Single Payment):")
+            print(f"   • EFT: {max_not_split['eft_num']}")
+            print(f"   • Payment: {max_not_split['practice_id']}_{max_not_split['payment_num']}")
+            print(f"   • Encounters to Check: {max_not_split['encs_to_check_count']}")
+            print(f"   • Status: {max_not_split['payment_status']}")
+
+        if max_analysis.get("split_single_eft"):
+            max_split = max_analysis["split_single_eft"]
+            print(f"\n🔍 Max Encounters (Split - Single EFT):")
+            print(f"   • EFT: {max_split['eft_num']}")
+            print(f"   • Total Encounters to Check: {max_split['total_encs_to_check']}")
+            print(f"   • Payments: {max_split['payment_count']}")
+
+        # Show top results from original categories
+        if results["mixed_post_no_plas"]:
+            top_no_plas = results["mixed_post_no_plas"][0]
+            print(f"\n🔍 Largest Mixed Post (No PLAs):")
+            print(f"   • EFT: {top_no_plas['eft_num']}")
+            print(f"   • Payment: {top_no_plas['practice_id']}_{top_no_plas['payment_num']}")
+            print(f"   • Encounters to Check: {top_no_plas['encs_to_check_count']}")
+
+        if results["mixed_post_l6_only"]:
+            top_l6_only = results["mixed_post_l6_only"][0]
+            print(f"\n🔍 Largest Mixed Post (L6 PLAs Only):")
+            print(f"   • EFT: {top_l6_only['eft_num']}")
+            print(f"   • Payment: {top_l6_only['practice_id']}_{top_l6_only['payment_num']}")
+            print(f"   • Encounters to Check: {top_l6_only['encs_to_check_count']}")
+
+        if results["charge_mismatch_cpt4_encounters"]:
+            smallest_charge = results["charge_mismatch_cpt4_encounters"][0]
+            print(f"\n🔍 Smallest Charge Mismatch CPT4:")
+            print(f"   • EFT: {smallest_charge['eft_num']}")
+            print(f"   • Payment: {smallest_charge['practice_id']}_{smallest_charge['payment_num']}")
+            print(f"   • Encounter: {smallest_charge['encounter_num']} (Status: {smallest_charge['encounter_status']})")
+            print(f"   • Encounters to Check in Payment: {smallest_charge['encs_to_check_count']}")
+
+
 class EncounterTagger:
     """
     Tags encounters in the data object based on review criteria.
@@ -871,8 +1022,25 @@ class EncounterTagger:
                         # Add to encs_to_check
                         encs_to_check[encounter_key] = review_data
 
-                # Update payment with encs_to_check
-                payment["encs_to_check"] = encs_to_check
+                # Sort encounters to check by encounter number and then by status
+                sorted_encs_to_check = {}
+                if encs_to_check:
+                    # Create sorting tuples: (encounter_num, status, original_key)
+                    sort_items = []
+                    for enc_key, enc_data in encs_to_check.items():
+                        enc_num = enc_data.get("num", "")
+                        enc_status = enc_data.get("clm_status", "")
+                        sort_items.append((enc_num, enc_status, enc_key, enc_data))
+
+                    # Sort by encounter number first, then by status
+                    sort_items.sort(key=lambda x: (x[0], x[1]))
+
+                    # Rebuild the sorted dictionary
+                    for _, _, enc_key, enc_data in sort_items:
+                        sorted_encs_to_check[enc_key] = enc_data
+
+                # Update payment with sorted encs_to_check
+                payment["encs_to_check"] = sorted_encs_to_check
 
         print(f"✅ Encounter tagging completed")
         return data_object

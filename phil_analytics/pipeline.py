@@ -10,7 +10,7 @@ import time
 from typing import Optional, Dict, Any
 from .combiner import ExcelCombiner
 from .scrubber import DataCleaner
-from .excel_data_processor import ExcelDataObjectCreator, EncounterTagger, PaymentTagger
+from .excel_data_processor import ExcelDataObjectCreator, EncounterTagger, PaymentTagger, AnalyticsProcessor
 from .markdown_generator import MarkdownGenerator
 from .exceptions import PhilAnalyticsError
 from .utils import format_runtime
@@ -68,6 +68,7 @@ class PhilPipeline:
         self.data_object_creator = None
         self.encounter_tagger = None
         self.payment_tagger = None
+        self.analytics_processor = None
         self.markdown_generator = None
 
         # Results storage
@@ -75,6 +76,7 @@ class PhilPipeline:
         self.scrubbed_data = None
         self.scrubbed_file_path = None
         self.data_object = None
+        self.analytics_results = None
 
         print(f"✅ Pipeline initialized successfully")
         print(f"   📁 Input folder: {self.input_folder}")
@@ -143,7 +145,10 @@ class PhilPipeline:
             # Step 6: Tag payments
             self._run_payment_tagging_step()
 
-            # Step 7: Generate markdown
+            # Step 7: Run analytics
+            self._run_analytics_step()
+
+            # Step 8: Generate markdown
             self._run_markdown_generation_step()
 
             # Calculate total runtime
@@ -250,9 +255,24 @@ class PhilPipeline:
         step_runtime = step_end_time - step_start_time
         print(f"⏱️ Payment tagging runtime: {format_runtime(step_runtime)}")
 
+    def _run_analytics_step(self) -> None:
+        """Run the analytics processing step."""
+        print(f"\n📊 Step 7: Running analytics")
+        step_start_time = time.time()
+
+        self.analytics_processor = AnalyticsProcessor()
+        self.analytics_results = self.analytics_processor.analyze_mixed_post_payments(self.data_object)
+
+        # Print analytics summary
+        self.analytics_processor.print_analytics_summary()
+
+        step_end_time = time.time()
+        step_runtime = step_end_time - step_start_time
+        print(f"⏱️ Analytics runtime: {format_runtime(step_runtime)}")
+
     def _run_markdown_generation_step(self) -> None:
         """Run the markdown generation step."""
-        print(f"\n📝 Step 7: Generating markdown")
+        print(f"\n📝 Step 8: Generating markdown")
         step_start_time = time.time()
 
         # Get missing encounter EFTs from the data object creator
@@ -262,7 +282,8 @@ class PhilPipeline:
         self.markdown_file_path = self.markdown_generator.generate_efts_markdown(
             self.data_object,
             self.output_folder,
-            missing_encounter_efts
+            missing_encounter_efts,
+            self.analytics_results  # Pass analytics results
         )
 
         # Get markdown stats with missing encounter EFTs info
@@ -317,6 +338,7 @@ class PhilPipeline:
             'total_runtime': total_runtime,
             'scrubbed_data': self.scrubbed_data,
             'data_object': self.data_object,
+            'analytics_results': self.analytics_results,
             'file_summary': self.combiner.get_file_summary() if self.combiner else {},
             'cleaning_stats': self.cleaner.get_cleaning_stats() if self.cleaner else {},
             'data_object_stats': self.data_object_creator.get_summary_stats() if self.data_object_creator else {},
@@ -356,6 +378,14 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
     print(f"   • Missing encounter EFTs: {len(results.get('missing_encounter_efts', []))}")
     print(f"   • Split EFTs: {results['markdown_stats'].get('split_efts', 0)}")
     print(f"   • Encounters to check: {results['markdown_stats'].get('total_encounters_to_check', 0)}")
+
+    # Print analytics summary
+    if results.get('analytics_results'):
+        analytics_summary = results['analytics_results'].get('summary', {})
+        print(f"   • Mixed Post (No PLAs): {analytics_summary.get('mixed_post_no_plas_count', 0)}")
+        print(f"   • Mixed Post (L6 Only): {analytics_summary.get('mixed_post_l6_only_count', 0)}")
+        print(f"   • Charge Mismatch CPT4: {analytics_summary.get('charge_mismatch_cpt4_count', 0)}")
+
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")
     print(f"   • Markdown file: {results['markdown_file']}")
 

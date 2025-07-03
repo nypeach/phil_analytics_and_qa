@@ -25,7 +25,7 @@ class MarkdownGenerator:
         """
         self.payer_name = payer_name
 
-    def generate_efts_markdown(self, data_object: Dict, output_dir: str = ".", missing_encounter_efts: Optional[List[str]] = None) -> str:
+    def generate_efts_markdown(self, data_object: Dict, output_dir: str = ".", missing_encounter_efts: Optional[List[str]] = None, analytics_results: Optional[Dict] = None) -> str:
         """
         Generate {payer}_efts.md file with encounters that need review.
 
@@ -33,6 +33,7 @@ class MarkdownGenerator:
             data_object (Dict): Complete data object with all EFTs, payments, encounters
             output_dir (str): Directory to save the markdown file
             missing_encounter_efts (List[str], optional): List of EFT NUMs with missing encounters
+            analytics_results (Dict, optional): Analytics results from AnalyticsProcessor
 
         Returns:
             str: Path to the saved markdown file
@@ -45,6 +46,10 @@ class MarkdownGenerator:
         # Add missing encounter EFTs section at the top if any exist
         if missing_encounter_efts and len(missing_encounter_efts) > 0:
             self._generate_missing_encounter_efts_section(missing_encounter_efts, markdown_content)
+
+        # Add Mixed Post Scenarios section
+        if analytics_results:
+            self._generate_mixed_post_scenarios_section(analytics_results, markdown_content)
 
         # Separate EFTs by split status
         not_split_efts = {}
@@ -79,7 +84,7 @@ class MarkdownGenerator:
             missing_encounter_efts (List[str]): List of EFT NUMs with missing encounters
             markdown_content (List[str]): List to append markdown content to
         """
-        markdown_content.append(f"# EFTs with Encounters Not Found ({len(missing_encounter_efts)})\n\n")
+        markdown_content.append(f"### EFTs with Encounters Not Found ({len(missing_encounter_efts)})\n\n")
 
         if missing_encounter_efts:
             for eft_num in sorted(missing_encounter_efts):
@@ -87,7 +92,104 @@ class MarkdownGenerator:
         else:
             markdown_content.append("None\n")
 
-        markdown_content.append("\n---\n\n")
+        markdown_content.append("\n")
+
+    def _generate_mixed_post_scenarios_section(self, analytics_results: Dict, markdown_content: List[str]) -> None:
+        """
+        Generate the "Mixed Post Scenarios" section with analytics insights as collapsible toggles.
+
+        Args:
+            analytics_results (Dict): Analytics results from AnalyticsProcessor
+            markdown_content (List[str]): List to append markdown content to
+        """
+        summary = analytics_results.get("summary", {})
+
+        # Calculate total scenarios
+        total_scenarios = (
+            summary.get("mixed_post_no_plas_count", 0) +
+            summary.get("mixed_post_l6_only_count", 0) +
+            summary.get("charge_mismatch_cpt4_count", 0)
+        )
+
+        # Add max encounters if they exist
+        max_analysis = analytics_results.get("max_encounters_analysis", {})
+        if max_analysis.get("not_split_single_payment") or max_analysis.get("split_single_eft"):
+            total_scenarios += 1
+
+        # Main Mixed Post Scenarios toggle
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>Mixed Post Scenarios ({total_scenarios})</summary>\n\n")
+
+        # Mixed Post with No PLAs
+        no_plas_count = summary.get("mixed_post_no_plas_count", 0)
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>Mixed Post with No PLAs ({no_plas_count})</summary>\n\n")
+
+        if analytics_results.get("mixed_post_no_plas"):
+            # Show ALL payments with most encounters to check first
+            all_no_plas = analytics_results["mixed_post_no_plas"]  # Already sorted by encounters to check (descending)
+            for payment in all_no_plas:
+                markdown_content.append(f"* **{payment['practice_id']}_{payment['payment_num']}** (EFT: {payment['eft_num']}) - {payment['encs_to_check_count']} encounters to check\n")
+        else:
+            markdown_content.append("None found.\n")
+
+        markdown_content.append("\n</details>\n\n")
+
+        # Mixed Post with L6 PLAs Only
+        l6_only_count = summary.get("mixed_post_l6_only_count", 0)
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>Mixed Post with L6 PLAs Only ({l6_only_count})</summary>\n\n")
+
+        if analytics_results.get("mixed_post_l6_only"):
+            # Show ALL payments with most encounters to check first
+            all_l6_only = analytics_results["mixed_post_l6_only"]  # Already sorted by encounters to check (descending)
+            for payment in all_l6_only:
+                markdown_content.append(f"* **{payment['practice_id']}_{payment['payment_num']}** (EFT: {payment['eft_num']}) - {payment['encs_to_check_count']} encounters to check, {payment['pla_l6_count']} L6 PLAs\n")
+        else:
+            markdown_content.append("None found.\n")
+
+        markdown_content.append("\n</details>\n\n")
+
+        # Max Encounters to Check
+        max_analysis = analytics_results.get("max_encounters_analysis", {})
+        if max_analysis.get("not_split_single_payment") or max_analysis.get("split_single_eft"):
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>Max Encounters to Check</summary>\n\n")
+
+            if max_analysis.get("not_split_single_payment"):
+                max_payment = max_analysis["not_split_single_payment"]
+                pla_info = ""
+                if max_payment['pla_l6_count'] > 0 or max_payment['pla_other_count'] > 0:
+                    pla_info = f" (L6 PLAs: {max_payment['pla_l6_count']}, Other PLAs: {max_payment['pla_other_count']})"
+                markdown_content.append(f"* **Not Split - Single Payment:** {max_payment['practice_id']}_{max_payment['payment_num']} (EFT: {max_payment['eft_num']}) - {max_payment['encs_to_check_count']} encounters to check - Status: {max_payment['payment_status']}{pla_info}\n")
+
+            if max_analysis.get("split_single_eft"):
+                max_eft = max_analysis["split_single_eft"]
+                markdown_content.append(f"* **Split - Single EFT:** {max_eft['eft_num']} - {max_eft['total_encs_to_check']} encounters to check across {max_eft['payment_count']} payments\n")
+
+                # Show ALL payments for this EFT
+                if max_eft.get("payments"):
+                    for payment in max_eft["payments"]:
+                        pla_info = ""
+                        if payment['pla_l6_count'] > 0 or payment['pla_other_count'] > 0:
+                            pla_info = f" (L6 PLAs: {payment['pla_l6_count']}, Other PLAs: {payment['pla_other_count']})"
+                        markdown_content.append(f"  * {payment['practice_id']}_{payment['payment_num']} - {payment['encs_to_check']} encounters - Status: {payment['status']}{pla_info}\n")
+
+            markdown_content.append("\n</details>\n\n")
+
+        # Charge Mismatch CPT4 Encounters
+        charge_mismatch_count = summary.get("charge_mismatch_cpt4_count", 0)
+        markdown_content.append(f"<details markdown=\"1\">\n<summary>Charge Mismatch CPT4 Encounters ({charge_mismatch_count})</summary>\n\n")
+
+        if analytics_results.get("charge_mismatch_cpt4_encounters"):
+            # Show ALL encounters with smallest number of encounters to check first (easier to review first)
+            all_charge_mismatch = analytics_results["charge_mismatch_cpt4_encounters"]  # Already sorted by encounters to check (ascending)
+            for encounter in all_charge_mismatch:
+                cpt4_str = ", ".join(encounter['cpt4_codes']) if encounter['cpt4_codes'] else "No CPT4"
+                markdown_content.append(f"* **{encounter['practice_id']}_{encounter['payment_num']}** (EFT: {encounter['eft_num']}) - Encounter {encounter['encounter_num']} (Status: {encounter['encounter_status']}) - {encounter['encs_to_check_count']} encounters to check - CPT4: {cpt4_str}\n")
+        else:
+            markdown_content.append("None found.\n")
+
+        markdown_content.append("\n</details>\n\n")
+
+        # Close main Mixed Post Scenarios toggle
+        markdown_content.append("</details>\n\n---\n\n")
 
     def _generate_not_split_section(self, not_split_efts: Dict, markdown_content: List[str]) -> None:
         """
