@@ -289,23 +289,24 @@ class ExcelDataObjectCreator:
 
     def _create_payment_object(self, payment_key: str, pmt_rows: pd.DataFrame) -> Dict:
         """
-        Create payment object from the rows.
+        Create payment object from the rows by parsing the File column.
 
         Args:
-            payment_key (str): Payment key (practice_id_check_number)
+            payment_key (str): Payment key (practice_id_check_number) - used for grouping but actual values come from File column
             pmt_rows (pd.DataFrame): All rows for this payment
 
         Returns:
             Dict: Payment object with all attributes
         """
-        # Extract practice_id and payment number from key
-        parts = payment_key.split('_')
-        practice_id = parts[0] if len(parts) > 0 else ""
-        pmt_num = parts[1] if len(parts) > 1 else ""
+        # Parse the File column to get the authoritative payment information
+        practice_id, pmt_num, payment_amount = self._parse_file_column(pmt_rows)
 
         # Get PLA rows for this payment
         pla_rows = self.get_pla_rows(pmt_rows)
         plas = self._create_pla_objects(pla_rows)
+
+        # Calculate PLA amounts
+        pla_amounts = self._calculate_pla_amounts(pla_rows)
 
         # Get encounter groups for this payment
         enc_groups = self.get_encounter_rows(pmt_rows)
@@ -319,13 +320,306 @@ class ExcelDataObjectCreator:
         payment = {
             "practice_id": str(practice_id),
             "num": str(pmt_num),
+            "amt": payment_amount,
             "status": "",  # Will be set by PaymentTagger
             "plas": plas,
+            "pla_l6_amts": pla_amounts["pla_l6_amts"],
+            "pla_other_amts": pla_amounts["pla_other_amts"],
+            "paid_less_l6": payment_amount - pla_amounts["pla_l6_amts"],
+            "paid_less_other": payment_amount - pla_amounts["pla_other_amts"],
+            "paid_less_all_plas": payment_amount - pla_amounts["pla_l6_amts"] - pla_amounts["pla_other_amts"],
             "encounters": encounters,
             "encs_to_check": {}  # Will be populated by EncounterTagger
         }
 
         return payment
+
+    def _parse_file_column(self, pmt_rows: pd.DataFrame) -> tuple[str, str, float]:
+        """
+        Parse the File column to extract practice_id, payment_number, and payment_amount.
+
+        File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
+        Example: 207008_SB542_35.03_1525153B100018112000_ACH_20250603
+
+        Args:
+            pmt_rows (pd.DataFrame): All rows for this payment
+
+        Returns:
+            tuple[str, str, float]: (practice_id, payment_number, payment_amount)
+        """
+        if 'File' not in pmt_rows.columns:
+            print(f"   ⚠️ Warning: No 'File' column found in payment rows")
+            return "", "", 0.0
+
+        # Get the first non-empty file name (should be the same for all rows in this payment)
+        file_names = pmt_rows['File'].astype(str).str.strip()
+        file_names = file_names[file_names != '']  # Remove empty values
+
+        if len(file_names) == 0:
+            print(f"   ⚠️ Warning: No file names found in payment rows")
+            return "", "", 0.0
+
+        file_name = file_names.iloc[0]
+
+        try:
+            # Split by underscore: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
+            parts = file_name.split('_')
+
+            if len(parts) < 6:
+                print(f"   ⚠️ Warning: File name format unexpected - expected 6 parts, got {len(parts)}: {file_name}")
+                return "", "", 0.0
+
+            # Extract the components
+            ws_id = parts[0].strip()              # WS_ID (practice identifier)
+            waystar_id = parts[1].strip()         # WAYSTAR ID
+            amount_str = parts[2].strip()         # AMT (payment amount)
+            chk_nbr = parts[3].strip()            # CHK NBR (payment/check number)
+            payment_type = parts[4].strip()       # TYPE (ACH, etc.)
+            file_date = parts[5].strip()          # FILE_DATE
+
+            # Convert amount to float
+            payment_amount = float(amount_str)
+
+            # Use WS_ID as practice_id and CHK_NBR as payment number
+            practice_id = ws_id
+            pmt_num = chk_nbr
+
+            print(f"   📄 Parsed file: {file_name}")
+            print(f"      • Practice ID: {practice_id}")
+            print(f"      • Payment Num: {pmt_num}")
+            print(f"      • Amount: ${payment_amount:,.2f}")
+
+            return practice_id, pmt_num, payment_amount
+
+        except (ValueError, TypeError, IndexError) as e:
+            print(f"   ❌ Error parsing file name '{file_name}': {e}")
+            return "", "", 0.0
+
+    def _calculate_payment_amount(self, pmt_rows: pd.DataFrame) -> float:
+        """
+        DEPRECATED: This method is no longer used since payment amount is extracted from File column.
+        Kept for backward compatibility but should not be called.
+
+        Args:
+            pmt_rows (pd.DataFrame): All rows for this payment
+
+        Returns:
+            float: Total payment amount
+        """
+        print(f"   ⚠️ Warning: _calculate_payment_amount() is deprecated - use _parse_file_column() instead")
+        return 0.0
+
+    def _extract_amount_from_file_name(self, file_name: str) -> Optional[float]:
+        """
+        DEPRECATED: This method is no longer used since parsing is handled in _parse_file_column().
+        Kept for backward compatibility but should not be called.
+
+        Args:
+            file_name (str): File name to parse
+
+        Returns:
+            Optional[float]: Extracted amount or None if parsing fails
+        """
+        print(f"   ⚠️ Warning: _extract_amount_from_file_name() is deprecated - use _parse_file_column() instead")
+        return None
+
+    def _calculate_payment_amount(self, pmt_rows: pd.DataFrame) -> float:
+        """
+        Calculate the total payment amount for this payment by parsing the File column.
+
+        File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
+        Example: 207008_SB542_35.03_1525153B100018112000_ACH_20250603
+        Example: 207008_SB542_-35.03_1525153B100018112000_ACH_20250603
+
+        Args:
+            pmt_rows (pd.DataFrame): All rows for this payment
+
+        Returns:
+            float: Total payment amount extracted from File column
+        """
+        # Try to get the payment amount from the File column
+        if 'File' in pmt_rows.columns:
+            try:
+                # Get unique file names for this payment (should be the same for all rows in the payment)
+                file_names = pmt_rows['File'].astype(str).str.strip()
+                file_names = file_names[file_names != '']  # Remove empty values
+
+                if len(file_names) > 0:
+                    # Parse the first file name to extract the amount
+                    file_name = file_names.iloc[0]
+                    payment_amount = self._extract_amount_from_file_name(file_name)
+                    if payment_amount is not None:
+                        return payment_amount
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback: Try to get the payment amount from the Chk Amt column if it exists
+        if 'Chk Amt' in pmt_rows.columns:
+            try:
+                # Get unique check amounts for this payment (should be the same for all rows in the payment)
+                chk_amts = pmt_rows['Chk Amt'].astype(str).str.strip()
+                chk_amts = chk_amts[chk_amts != '']  # Remove empty values
+
+                if len(chk_amts) > 0:
+                    # Convert to float and take the first value (they should all be the same)
+                    chk_amt = float(chk_amts.iloc[0])
+                    return chk_amt
+            except (ValueError, TypeError):
+                pass
+
+        # Second fallback: sum of all paid amounts in this payment
+        if 'Pd Amt' in pmt_rows.columns:
+            try:
+                pd_amts = pmt_rows['Pd Amt'].astype(str).str.strip()
+                pd_amts = pd_amts[pd_amts != '']  # Remove empty values
+
+                total_paid = 0.0
+                for amt_str in pd_amts:
+                    try:
+                        total_paid += float(amt_str)
+                    except (ValueError, TypeError):
+                        continue
+
+                return total_paid
+            except:
+                pass
+
+        # Default to 0.0 if we can't calculate the amount
+        return 0.0
+
+    def _extract_amount_from_file_name(self, file_name: str) -> Optional[float]:
+        """
+        Extract the payment amount from the file name.
+
+        File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
+        Examples:
+        - 207008_SB542_35.03_1525153B100018112000_ACH_20250603 → 35.03
+        - 207008_SB542_-35.03_1525153B100018112000_ACH_20250603 → -35.03
+
+        Args:
+            file_name (str): File name to parse
+
+        Returns:
+            Optional[float]: Extracted amount or None if parsing fails
+        """
+        try:
+            # Split by underscore to get file parts
+            parts = file_name.split('_')
+
+            # We expect at least 6 parts: WS_ID, WAYSTAR_ID, AMT, CHK_NBR, TYPE, FILE_DATE
+            if len(parts) >= 3:
+                # The amount should be in the third position (index 2)
+                amount_str = parts[2].strip()
+
+                # Convert to float (handles both positive and negative amounts)
+                return float(amount_str)
+
+        except (ValueError, TypeError, IndexError) as e:
+            print(f"   ⚠️ Warning: Could not parse amount from file name '{file_name}': {e}")
+
+        return None
+
+    def _calculate_pla_amounts(self, pla_rows: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate PLA amounts from PLA rows with reverse logic.
+
+        Args:
+            pla_rows (pd.DataFrame): PLA rows
+
+        Returns:
+            Dict[str, float]: Dictionary with pla_l6_amts and pla_other_amts
+        """
+        pla_l6_amts = 0.0
+        pla_other_amts = 0.0
+
+        if 'Description' not in pla_rows.columns:
+            return {"pla_l6_amts": pla_l6_amts, "pla_other_amts": pla_other_amts}
+
+        for _, row in pla_rows.iterrows():
+            description = str(row['Description']).strip()
+            clm_nbr = str(row.get('Clm Nbr', '')).strip()
+            enc_nbr = str(row.get('Enc Nbr', '')).strip()
+
+            # Extract amount from description
+            pla_amount = self._extract_pla_amount(description)
+
+            if pla_amount is not None:
+                # Apply reverse logic: if PLA amount is -11.93, we add +11.93
+                # if PLA amount is 11.93, we add -11.93
+                reversed_amount = -pla_amount
+
+                # Determine if this is L6 or other PLA
+                # L6 PLAs are identified by condition 2 from the PLA criteria:
+                # Clm Nbr = "Provider Lvl Adj" AND Enc Nbr != "" AND Description contains "L6"
+                is_l6 = (
+                    clm_nbr == "Provider Lvl Adj" and
+                    enc_nbr != "" and
+                    'L6' in description
+                )
+
+                if is_l6:
+                    pla_l6_amts += reversed_amount
+                else:
+                    pla_other_amts += reversed_amount
+
+        return {"pla_l6_amts": pla_l6_amts, "pla_other_amts": pla_other_amts}
+
+    def _extract_pla_amount(self, description: str) -> Optional[float]:
+        """
+        Extract PLA amount from description text.
+
+        Args:
+            description (str): PLA description text
+
+        Returns:
+            Optional[float]: Extracted amount or None if not found
+        """
+        # Look for dollar amounts in the description
+        # Common patterns: $123.45, $-123.45, -$123.45, etc.
+
+        # First try to find patterns with $ sign
+        dollar_patterns = [
+            r'\$(-?\d+\.?\d*)',  # $123.45 or $-123.45
+            r'(-?\$\d+\.?\d*)',  # -$123.45
+            r'Amt:\s*\$?(-?\d+\.?\d*)',  # Amt: $123.45 or Amt: 123.45
+            r'Amount:\s*\$?(-?\d+\.?\d*)',  # Amount: $123.45 or Amount: 123.45
+        ]
+
+        for pattern in dollar_patterns:
+            matches = re.findall(pattern, description)
+            if matches:
+                try:
+                    # Get the first match and clean it
+                    amount_str = matches[0].replace('$', '').strip()
+                    return float(amount_str)
+                except (ValueError, TypeError):
+                    continue
+
+        # If no dollar patterns found, look for any number that might be an amount
+        # Look for patterns like "Provider Level Adjustment found: 123.45"
+        number_patterns = [
+            r'found:\s*(-?\d+\.?\d*)',  # found: 123.45
+            r'applied:\s*(-?\d+\.?\d*)',  # applied: 123.45
+            r':\s*(-?\d+\.?\d*)$',  # ends with : 123.45
+        ]
+
+        for pattern in number_patterns:
+            matches = re.findall(pattern, description)
+            if matches:
+                try:
+                    return float(matches[0])
+                except (ValueError, TypeError):
+                    continue
+
+        # Last resort: look for any decimal number in the description
+        decimal_matches = re.findall(r'(-?\d+\.\d{2})', description)
+        if decimal_matches:
+            try:
+                return float(decimal_matches[0])
+            except (ValueError, TypeError):
+                pass
+
+        return None
 
     def _create_pla_objects(self, pla_rows: pd.DataFrame) -> Dict[str, List]:
         """

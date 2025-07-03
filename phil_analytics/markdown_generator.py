@@ -107,6 +107,7 @@ class MarkdownGenerator:
 
                 # Calculate counts
                 encs_to_check_count = len(payment.get("encs_to_check", {}))
+                total_encounters = len(payment.get("encounters", {}))
                 pla_count = len(payment["plas"]["pla_l6"]) + len(payment["plas"]["pla_other"])
 
                 payment_info = {
@@ -115,6 +116,7 @@ class MarkdownGenerator:
                     'practice_id': payment['practice_id'],
                     'pmt_num': payment['num'],
                     'encs_to_check_count': encs_to_check_count,
+                    'total_encounters': total_encounters,
                     'pla_count': pla_count,
                     'payment': payment,
                     'eft': eft
@@ -138,13 +140,30 @@ class MarkdownGenerator:
                 sorted_payments = sorted(payments, key=lambda x: (x['practice_id'], x['pmt_num']))
 
                 for payment_info in sorted_payments:
-                    payment_title = f"{payment_info['practice_id']}_{payment_info['pmt_num']} (EFT: {payment_info['eft_num']}, Encs To Check: {payment_info['encs_to_check_count']}, PLAs: {payment_info['pla_count']})"
-                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+                    # Create payment title with updated format for not split
+                    payment_title = f"{payment_info['practice_id']}_{payment_info['pmt_num']} (EFT: {payment_info['eft_num']}, Encs To Check: {payment_info['encs_to_check_count']}/{payment_info['total_encounters']}, PLAs: {payment_info['pla_count']})"
 
-                    # Add detailed payment content
-                    self._generate_payment_details(payment_info['payment'], payment_info['eft'], markdown_content)
+                    # Check if there's any content to show
+                    has_plas = payment_info['pla_count'] > 0
+                    has_encounters_to_check = payment_info['encs_to_check_count'] > 0
+                    payment_status = payment_info['payment'].get('status', 'Unknown')
 
-                    markdown_content.append("</details>\n\n")
+                    # Show collapsible section only if there are PLAs or encounters to check, and it's not Immediate Post
+                    if (has_plas or has_encounters_to_check) and payment_status != "Immediate Post":
+                        markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+
+                        # Add PLA amount breakdown if payment has PLAs
+                        if has_plas:
+                            self._generate_pla_amount_breakdown(payment_info['payment'], markdown_content)
+                            markdown_content.append("\n")
+
+                        # Add detailed payment content only if there are PLAs or encounters to check
+                        self._generate_payment_details(payment_info['payment'], payment_info['eft'], markdown_content, has_plas, has_encounters_to_check)
+
+                        markdown_content.append("</details>\n\n")
+                    else:
+                        # Just show the title without a collapsible section for Immediate Post or payments with no content
+                        markdown_content.append(f"* {payment_title}\n\n")
             else:
                 markdown_content.append("No payments in this category.\n\n")
 
@@ -184,59 +203,100 @@ class MarkdownGenerator:
             for payment_key, payment in sorted_payments:
                 # Calculate counts for this payment
                 encs_to_check_count = len(payment.get("encs_to_check", {}))
+                total_encounters = len(payment.get("encounters", {}))
                 pla_count = len(payment["plas"]["pla_l6"]) + len(payment["plas"]["pla_other"])
                 payment_status = payment.get("status", "Unknown")
 
-                payment_title = f"{payment['practice_id']}_{payment['num']} (Status: {payment_status}, Encs To Check: {encs_to_check_count}, PLAs: {pla_count})"
-                markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+                # Create payment title with updated format for split
+                payment_title = f"{payment['practice_id']}_{payment['num']} (Status: {payment_status}, Encs To Check: {encs_to_check_count}/{total_encounters}, PLAs: {pla_count})"
 
-                # Add detailed payment content
-                self._generate_payment_details(payment, eft, markdown_content)
+                # Check if there's any content to show
+                has_plas = pla_count > 0
+                has_encounters_to_check = encs_to_check_count > 0
 
-                markdown_content.append("</details>\n\n")  # Close payment
+                # Show collapsible section only if there are PLAs or encounters to check, and it's not Immediate Post
+                if (has_plas or has_encounters_to_check) and payment_status != "Immediate Post":
+                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+
+                    # Add PLA amount breakdown if payment has PLAs
+                    if has_plas:
+                        self._generate_pla_amount_breakdown(payment, markdown_content)
+                        markdown_content.append("\n")
+
+                    # Add detailed payment content only if there are PLAs or encounters to check
+                    self._generate_payment_details(payment, eft, markdown_content, has_plas, has_encounters_to_check)
+
+                    markdown_content.append("</details>\n\n")  # Close payment
+                else:
+                    # Just show the title without a collapsible section for Immediate Post or payments with no content
+                    markdown_content.append(f"* {payment_title}\n\n")
 
             markdown_content.append("</details>\n\n")  # Close EFT
 
         markdown_content.append("</details>\n\n")  # Close EFTs - Split
 
-    def _generate_payment_details(self, payment: Dict, eft: Dict, markdown_content: List[str]) -> None:
+    def _generate_pla_amount_breakdown(self, payment: Dict, markdown_content: List[str]) -> None:
+        """
+        Generate the PLA amount breakdown for payments that have PLAs.
+        Uses the pre-calculated values from the payment object.
+
+        Args:
+            payment (Dict): Payment object with PLA amounts
+            markdown_content (List[str]): List to append markdown content to
+        """
+        # Get the pre-calculated amounts from the payment object (with safe defaults)
+        paid_amt = payment.get("amt", 0.0)  # Final ledger amount from File column (Ledger After PLAs)
+        pla_l6_amts = payment.get("pla_l6_amts", 0.0)  # Interest (L6 PLA amounts)
+        pla_other_amts = payment.get("pla_other_amts", 0.0)  # Other PLA amounts
+        paid_less_l6 = payment.get("paid_less_l6", 0.0)  # Subtotal after interest
+        paid_less_all_plas = payment.get("paid_less_all_plas", 0.0)  # This was the old "Balance" - now "Ledger Before PLAs"
+
+        # Format amounts as currency - display the pre-calculated values in the new order
+        markdown_content.append(f"* Ledger Before PLAs: ${paid_less_all_plas:,.2f}\n")
+        markdown_content.append(f"* Interest: ${pla_l6_amts:,.2f}\n")
+        markdown_content.append(f"* Subtotal: ${paid_less_l6:,.2f}\n")
+        markdown_content.append(f"* Other PLAs: ${pla_other_amts:,.2f}\n")
+        markdown_content.append(f"* Ledger After PLAs: ${paid_amt:,.2f}\n")
+
+    def _generate_payment_details(self, payment: Dict, eft: Dict, markdown_content: List[str], has_plas: bool = True, has_encounters_to_check: bool = True) -> None:
         """
         Generate the detailed content for a payment (PLAs and Encounters).
+        Only generates sections that have content.
 
         Args:
             payment (Dict): Payment object
             eft (Dict): EFT object (for context)
             markdown_content (List[str]): List to append markdown content to
+            has_plas (bool): Whether this payment has PLAs
+            has_encounters_to_check (bool): Whether this payment has encounters to check
         """
-        # PLA section
-        pla_l6_count = len(payment["plas"]["pla_l6"])
-        pla_other_count = len(payment["plas"]["pla_other"])
-        pla_title = f"PLAs (L6: {pla_l6_count}, Other: {pla_other_count})"
-        markdown_content.append(f"<details markdown=\"1\">\n<summary>{pla_title}</summary>\n\n")
+        # PLA section - only show if there are PLAs
+        if has_plas:
+            pla_l6_count = len(payment["plas"]["pla_l6"])
+            pla_other_count = len(payment["plas"]["pla_other"])
+            pla_title = f"PLAs (L6: {pla_l6_count}, Other: {pla_other_count})"
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{pla_title}</summary>\n\n")
 
-        if payment["plas"]["pla_l6"]:
-            markdown_content.append("**L6 PLAs:**\n")
-            for pla in payment["plas"]["pla_l6"]:
-                markdown_content.append(f"- {pla}\n")
-            markdown_content.append("\n")
+            if payment["plas"]["pla_l6"]:
+                markdown_content.append("**L6 PLAs:**\n")
+                for pla in payment["plas"]["pla_l6"]:
+                    markdown_content.append(f"- {pla}\n")
+                markdown_content.append("\n")
 
-        if payment["plas"]["pla_other"]:
-            markdown_content.append("**Other PLAs:**\n")
-            for pla in payment["plas"]["pla_other"]:
-                markdown_content.append(f"- {pla}\n")
-            markdown_content.append("\n")
+            if payment["plas"]["pla_other"]:
+                markdown_content.append("**Other PLAs:**\n")
+                for pla in payment["plas"]["pla_other"]:
+                    markdown_content.append(f"- {pla}\n")
+                markdown_content.append("\n")
 
-        if not payment["plas"]["pla_l6"] and not payment["plas"]["pla_other"]:
-            markdown_content.append("No PLAs found.\n\n")
+            markdown_content.append("</details>\n\n")
 
-        markdown_content.append("</details>\n\n")
+        # Encounters section - only show if there are encounters that need review
+        if has_encounters_to_check:
+            encs_to_check = payment.get("encs_to_check", {})
+            encounters_title = f"Encounters to Check ({len(encs_to_check)})"
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
 
-        # Encounters section - only show encounters that need review
-        encs_to_check = payment.get("encs_to_check", {})
-        encounters_title = f"Encounters to Check ({len(encs_to_check)})"
-        markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
-
-        if encs_to_check:
             for enc_key, enc_check_data in encs_to_check.items():
                 # Count number of types to check for this encounter
                 review_count = len(enc_check_data['types'])
@@ -250,10 +310,8 @@ class MarkdownGenerator:
                     markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
 
                 markdown_content.append("\n</details>\n\n")
-        else:
-            markdown_content.append("No encounters require review.\n\n")
 
-        markdown_content.append("</details>\n\n")
+            markdown_content.append("</details>\n\n")
 
     def generate_summary_stats(self, data_object: Dict, missing_encounter_efts: Optional[List[str]] = None) -> Dict:
         """
