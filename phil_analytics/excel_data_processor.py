@@ -496,7 +496,7 @@ class EncounterTagger:
             "22_no_123", "22_with_123", "appeal_has_adj", "chg_equal_adj",
             "secondary_n408_pr96", "secondary_co94_oa94", "secondary_mc_tricare_dshs",
             "tertiary", "enc_payer_not_found", "multiple_to_one", "other_not_posted",
-            "svc_no_match_clm"
+            "svc_no_match_clm", "chg_mismatch_cpt4"
         ]
 
     def tag_encounters(self, data_object: Dict) -> Dict:
@@ -548,6 +548,9 @@ class EncounterTagger:
         """
         encounter_num = encounter["num"]
 
+        # Define service pairs for charge mismatch checking
+        service_pairs = {("99202", "99212"), ("99203", "99213"), ("99204", "99214"), ("99205", "99215"), ("99206", "99216")}
+
         # Create all_encounters for payment encounters where encounter number matches
         all_encounters = {}
         for enc_key, enc_data in payment["encounters"].items():
@@ -594,7 +597,7 @@ class EncounterTagger:
         for service in encounter["services"]:
             enc_type = self._analyze_service(
                 service, payer, primary_cpt4s, secondary_cpt4s,
-                tertiary_cpt4s, recoupment_cpt4s
+                tertiary_cpt4s, recoupment_cpt4s, service_pairs
             )
 
             if enc_type:
@@ -617,7 +620,8 @@ class EncounterTagger:
             return None
 
     def _analyze_service(self, service: Dict, payer: str, primary_cpt4s: set,
-                        secondary_cpt4s: set, tertiary_cpt4s: set, recoupment_cpt4s: set) -> Optional[str]:
+                        secondary_cpt4s: set, tertiary_cpt4s: set, recoupment_cpt4s: set,
+                        service_pairs: set) -> Optional[str]:
         """
         Analyze a single service to determine encounter type tag.
 
@@ -628,6 +632,7 @@ class EncounterTagger:
             secondary_cpt4s (set): Set of secondary service CPT4 codes
             tertiary_cpt4s (set): Set of tertiary service CPT4 codes
             recoupment_cpt4s (set): Set of recoupment service CPT4 codes
+            service_pairs (set): Set of service pairs for charge mismatch checking
 
         Returns:
             Optional[str]: Encounter type tag or None if no tag applies
@@ -655,21 +660,39 @@ class EncounterTagger:
         if description == "Service line payments do not sum to claim level payment.":
             return "svc_no_match_clm"
 
+        if description == "Charge mismatch on CPT4.":
+            return "chg_mismatch_cpt4"
+
         if posted_sts == "Not Posted":
             return "other_not_posted"
 
-        # HANDLE REPROCESSED
+        # Get service pairs and opposite CPT4 for use in both recoupment and non-recoupment logic
+        opposite_cpt4 = None
+        for pair in service_pairs:
+            if cpt4 in pair:
+                opposite_cpt4 = pair[1] if pair[0] == cpt4 else pair[0]
+                break
+
+        # HANDLE RECOUPMENT
         if clm_sts == "22":
+            # If opposite CPT4 is in primary, secondary, or tertiary services, return None
+            if opposite_cpt4:
+                all_other_cpt4s = primary_cpt4s | secondary_cpt4s | tertiary_cpt4s
+                if opposite_cpt4 in all_other_cpt4s:
+                    return None
+
+            # Otherwise follow the standard 22 checks
             all_other_cpt4s = primary_cpt4s | secondary_cpt4s | tertiary_cpt4s
             if cpt4 in all_other_cpt4s:
                 return "22_with_123"
             else:
                 return "22_no_123"
 
-        # HANDLE SECONDARY
+        # HANDLE NON-RECOUPMENT
+        # Check for CPT4 or opposite CPT4 in recoupment services
         if clm_sts != "22":
-            # Skip if there's a matching CPT4 in recoupment services
-            if cpt4 in recoupment_cpt4s:
+            # Skip if current CPT4 or opposite CPT4 is in recoupment services
+            if cpt4 in recoupment_cpt4s or (opposite_cpt4 and opposite_cpt4 in recoupment_cpt4s):
                 return None
 
             # Check for appeal with adjustment
@@ -680,6 +703,7 @@ class EncounterTagger:
             if self._amounts_equal(bill_amt, self._get_adj_amt(service)) and txn_status != "Appeal":
                 return "chg_equal_adj"
 
+        # HANDLE SECONDARY
         # Secondary claim status specific checks
         if clm_sts in ["2", "20"]:
             # Check for N408 + PR96 + (CO45 or OA23)
@@ -755,7 +779,7 @@ class PaymentTagger:
             "multiple_to_one",
             "other_not_posted",
             "svc_no_match_clm",
-            "chg_mismatch_on_cpt4"
+            "chg_mismatch_cpt4"
         ]
 
         self.check_ng_and_data = [
