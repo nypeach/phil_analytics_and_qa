@@ -217,6 +217,11 @@ class PhilPipeline:
         stats = self.data_object_creator.get_summary_stats()
         print(f"   📋 Created data object with {stats['total_eft_nums']} EFTs from {stats['total_rows']:,} rows")
 
+        # Report missing encounter EFTs if any
+        missing_encounter_efts = self.data_object_creator.get_missing_encounter_efts()
+        if missing_encounter_efts:
+            print(f"   ⚠️ Found {len(missing_encounter_efts)} EFTs with missing encounters (excluded from processing)")
+
         step_end_time = time.time()
         step_runtime = step_end_time - step_start_time
         print(f"⏱️ Data object creation runtime: {format_runtime(step_runtime)}")
@@ -250,13 +255,22 @@ class PhilPipeline:
         print(f"\n📝 Step 7: Generating markdown")
         step_start_time = time.time()
 
-        self.markdown_generator = MarkdownGenerator(self.payer_folder)
-        self.markdown_file_path = self.markdown_generator.generate_efts_markdown(self.data_object, self.output_folder)
+        # Get missing encounter EFTs from the data object creator
+        missing_encounter_efts = self.data_object_creator.get_missing_encounter_efts() if self.data_object_creator else []
 
-        # Get markdown stats
-        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object)
+        self.markdown_generator = MarkdownGenerator(self.payer_folder)
+        self.markdown_file_path = self.markdown_generator.generate_efts_markdown(
+            self.data_object,
+            self.output_folder,
+            missing_encounter_efts
+        )
+
+        # Get markdown stats with missing encounter EFTs info
+        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object, missing_encounter_efts)
         print(f"   📊 Generated markdown for {markdown_stats['total_efts']} EFTs")
         print(f"   🔍 Found {markdown_stats['total_encounters_to_check']} encounters to check")
+        if missing_encounter_efts:
+            print(f"   ⚠️ Found {len(missing_encounter_efts)} EFTs with missing encounters")
 
         step_end_time = time.time()
         step_runtime = step_end_time - step_start_time
@@ -294,8 +308,9 @@ class PhilPipeline:
         Returns:
             Dict[str, Any]: Full pipeline results and statistics
         """
-        # Get markdown stats
-        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object) if self.markdown_generator else {}
+        # Get markdown stats with missing encounter EFTs
+        missing_encounter_efts = self.data_object_creator.get_missing_encounter_efts() if self.data_object_creator else []
+        markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object, missing_encounter_efts) if self.markdown_generator else {}
 
         results = {
             'payer_folder': self.payer_folder,
@@ -306,6 +321,7 @@ class PhilPipeline:
             'cleaning_stats': self.cleaner.get_cleaning_stats() if self.cleaner else {},
             'data_object_stats': self.data_object_creator.get_summary_stats() if self.data_object_creator else {},
             'markdown_stats': markdown_stats,
+            'missing_encounter_efts': missing_encounter_efts,
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
             'markdown_file': getattr(self, 'markdown_file_path', ''),
@@ -337,6 +353,7 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
     print(f"   • Total rows: {results['file_summary'].get('total_rows', 'Unknown'):,}")
     print(f"   • Bad rows removed: {results['cleaning_stats'].get('bad_rows_removed', 0):,}")
     print(f"   • EFTs found: {results['data_object_stats'].get('total_eft_nums', 0)}")
+    print(f"   • Missing encounter EFTs: {len(results.get('missing_encounter_efts', []))}")
     print(f"   • Split EFTs: {results['markdown_stats'].get('split_efts', 0)}")
     print(f"   • Encounters to check: {results['markdown_stats'].get('total_encounters_to_check', 0)}")
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")

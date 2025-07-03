@@ -32,6 +32,7 @@ class ExcelDataObjectCreator:
         self.df = None
         self.payer_name = None
         self.data_object = {}
+        self.missing_encounter_efts = []
         self._load_data()
 
     def _load_data(self):
@@ -65,9 +66,47 @@ class ExcelDataObjectCreator:
             print(f"Loaded {len(self.df)} rows from {self.file_path}")
             print(f"Columns: {list(self.df.columns)}")
 
+            # Check for missing encounter EFTs and remove them
+            self._identify_and_remove_missing_encounter_efts()
+
         except Exception as e:
             print(f"Error loading data: {e}")
             raise
+
+    def _identify_and_remove_missing_encounter_efts(self):
+        """
+        Identify EFTs with 'Encounter not found.' description and remove all rows for those EFTs.
+        """
+        print("🔍 Checking for EFTs with missing encounters...")
+
+        # Find all EFT NUMs that have "Encounter not found." in Description
+        if 'Description' in self.df.columns:
+            encounter_not_found_mask = self.df['Description'].astype(str).str.strip() == "Encounter not found."
+            missing_encounter_rows = self.df[encounter_not_found_mask]
+
+            if not missing_encounter_rows.empty:
+                # Get unique EFT NUMs that have missing encounters
+                self.missing_encounter_efts = missing_encounter_rows['EFT NUM'].astype(str).unique().tolist()
+                self.missing_encounter_efts = [eft for eft in self.missing_encounter_efts if eft and eft.strip() != '']
+
+                if self.missing_encounter_efts:
+                    print(f"   ⚠️ Found {len(self.missing_encounter_efts)} EFTs with missing encounters:")
+                    for eft in self.missing_encounter_efts:
+                        print(f"      • EFT: {eft}")
+
+                    # Remove ALL rows for these EFT NUMs from the dataframe
+                    original_row_count = len(self.df)
+                    self.df = self.df[~self.df['EFT NUM'].astype(str).isin(self.missing_encounter_efts)].copy()
+                    removed_row_count = original_row_count - len(self.df)
+
+                    print(f"   🗑️ Removed {removed_row_count:,} rows from {len(self.missing_encounter_efts)} EFTs with missing encounters")
+                    print(f"   📊 Remaining rows: {len(self.df):,}")
+                else:
+                    print("   ✅ No EFTs with missing encounters found")
+            else:
+                print("   ✅ No rows with 'Encounter not found.' description found")
+        else:
+            print("   ⚠️ No 'Description' column found - skipping missing encounter check")
 
     def create_data_object(self) -> Dict:
         """
@@ -78,7 +117,7 @@ class ExcelDataObjectCreator:
         """
         print(f"🏗️ Creating data object for {self.payer_name}...")
 
-        # Get all unique EFT NUMs
+        # Get all unique EFT NUMs (after missing encounter EFTs have been removed)
         eft_nums = self.df['EFT NUM'].astype(str).unique()
         eft_nums = [eft for eft in eft_nums if eft and eft.strip() != '']
 
@@ -467,6 +506,15 @@ class ExcelDataObjectCreator:
         """
         return self.data_object
 
+    def get_missing_encounter_efts(self) -> List[str]:
+        """
+        Get the list of EFT NUMs that have missing encounters.
+
+        Returns:
+            List[str]: List of EFT NUMs with missing encounters
+        """
+        return self.missing_encounter_efts.copy()
+
     def get_summary_stats(self) -> Dict:
         """
         Get summary statistics for the dataset.
@@ -477,6 +525,7 @@ class ExcelDataObjectCreator:
         stats = {
             'total_rows': len(self.df),
             'total_eft_nums': len(self.data_object),
+            'missing_encounter_efts': len(self.missing_encounter_efts),
             'columns': list(self.df.columns),
             'payer_name': self.payer_name
         }

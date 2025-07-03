@@ -5,7 +5,7 @@ This module generates markdown files from the complete data object.
 Creates {filename}_efts.md with encounters that need review.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from pathlib import Path
 from collections import defaultdict
 
@@ -25,13 +25,14 @@ class MarkdownGenerator:
         """
         self.payer_name = payer_name
 
-    def generate_efts_markdown(self, data_object: Dict, output_dir: str = ".") -> str:
+    def generate_efts_markdown(self, data_object: Dict, output_dir: str = ".", missing_encounter_efts: Optional[List[str]] = None) -> str:
         """
         Generate {payer}_efts.md file with encounters that need review.
 
         Args:
             data_object (Dict): Complete data object with all EFTs, payments, encounters
             output_dir (str): Directory to save the markdown file
+            missing_encounter_efts (List[str], optional): List of EFT NUMs with missing encounters
 
         Returns:
             str: Path to the saved markdown file
@@ -40,6 +41,10 @@ class MarkdownGenerator:
 
         markdown_content = []
         markdown_content.append(f"# {self.payer_name} EFTs Analysis\n\n")
+
+        # Add missing encounter EFTs section at the top if any exist
+        if missing_encounter_efts and len(missing_encounter_efts) > 0:
+            self._generate_missing_encounter_efts_section(missing_encounter_efts, markdown_content)
 
         # Separate EFTs by split status
         not_split_efts = {}
@@ -65,6 +70,24 @@ class MarkdownGenerator:
 
         print(f"   ✅ EFTs markdown saved to: {output_path}")
         return str(output_path)
+
+    def _generate_missing_encounter_efts_section(self, missing_encounter_efts: List[str], markdown_content: List[str]) -> None:
+        """
+        Generate the "EFTs with Encounters Not Found" section at the top of the markdown.
+
+        Args:
+            missing_encounter_efts (List[str]): List of EFT NUMs with missing encounters
+            markdown_content (List[str]): List to append markdown content to
+        """
+        markdown_content.append(f"# EFTs with Encounters Not Found ({len(missing_encounter_efts)})\n\n")
+
+        if missing_encounter_efts:
+            for eft_num in sorted(missing_encounter_efts):
+                markdown_content.append(f"* {eft_num}\n")
+        else:
+            markdown_content.append("None\n")
+
+        markdown_content.append("\n---\n\n")
 
     def _generate_not_split_section(self, not_split_efts: Dict, markdown_content: List[str]) -> None:
         """
@@ -232,12 +255,13 @@ class MarkdownGenerator:
 
         markdown_content.append("</details>\n\n")
 
-    def generate_summary_stats(self, data_object: Dict) -> Dict:
+    def generate_summary_stats(self, data_object: Dict, missing_encounter_efts: Optional[List[str]] = None) -> Dict:
         """
         Generate summary statistics from the data object.
 
         Args:
             data_object (Dict): Complete data object
+            missing_encounter_efts (List[str], optional): List of EFT NUMs with missing encounters
 
         Returns:
             Dict: Summary statistics
@@ -249,6 +273,7 @@ class MarkdownGenerator:
             'total_payments': 0,
             'total_encounters': 0,
             'total_encounters_to_check': 0,
+            'missing_encounter_efts': len(missing_encounter_efts) if missing_encounter_efts else 0,
             'payer_name': self.payer_name,
             'payment_statuses': {},  # Track payment status counts
             'not_split_by_status': {}  # Track not-split payments by status
