@@ -323,11 +323,8 @@ class ExcelDataObjectCreator:
             "amt": payment_amount,
             "status": "",  # Will be set by PaymentTagger
             "plas": plas,
-            "pla_l6_amts": pla_amounts["pla_l6_amts"],
-            "pla_other_amts": pla_amounts["pla_other_amts"],
-            "paid_less_l6": payment_amount - pla_amounts["pla_l6_amts"],
-            "paid_less_other": payment_amount - pla_amounts["pla_other_amts"],
-            "paid_less_all_plas": payment_amount - pla_amounts["pla_l6_amts"] - pla_amounts["pla_other_amts"],
+            "pla_l6_amts": pla_amounts["pla_l6_amts"],  # Sum of L6 PLA amounts
+            "pla_other_amts": pla_amounts["pla_other_amts"],  # Sum of Other PLA amounts
             "encounters": encounters,
             "encs_to_check": {}  # Will be populated by EncounterTagger
         }
@@ -397,7 +394,7 @@ class ExcelDataObjectCreator:
 
     def _calculate_pla_amounts(self, pla_rows: pd.DataFrame) -> Dict[str, float]:
         """
-        Calculate PLA amounts from PLA rows with reverse logic.
+        Calculate PLA amounts from PLA rows using the actual amounts (no reverse logic).
 
         Args:
             pla_rows (pd.DataFrame): PLA rows
@@ -420,9 +417,8 @@ class ExcelDataObjectCreator:
             pla_amount = self._extract_pla_amount(description)
 
             if pla_amount is not None:
-                # Apply reverse logic: if PLA amount is -11.93, we add +11.93
-                # if PLA amount is 11.93, we add -11.93
-                reversed_amount = -pla_amount
+                # Use actual PLA amount (no reverse logic)
+                actual_amount = pla_amount
 
                 # Determine if this is L6 or other PLA
                 # L6 PLAs are identified by condition 2 from the PLA criteria:
@@ -434,9 +430,9 @@ class ExcelDataObjectCreator:
                 )
 
                 if is_l6:
-                    pla_l6_amts += reversed_amount
+                    pla_l6_amts += actual_amount
                 else:
-                    pla_other_amts += reversed_amount
+                    pla_other_amts += actual_amount
 
         return {"pla_l6_amts": pla_l6_amts, "pla_other_amts": pla_other_amts}
 
