@@ -274,22 +274,22 @@ class MarkdownGenerator:
                     has_encounters_to_check = payment_info['encs_to_check_count'] > 0
                     payment_status = payment_info['payment'].get('status', 'Unknown')
 
-                    # Show collapsible section only if there are PLAs or encounters to check, and it's not Immediate Post
-                    if (has_plas or has_encounters_to_check) and payment_status != "Immediate Post":
-                        markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+                    # Show collapsible section for ALL payments - every payment gets "It Should"
+                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
 
-                        # Add PLA amount breakdown if payment has PLAs
-                        if has_plas:
-                            self._generate_pla_amount_breakdown(payment_info['payment'], markdown_content)
-                            markdown_content.append("\n")
+                    # Add PLA amount breakdown if payment has PLAs
+                    if has_plas:
+                        self._generate_pla_amount_breakdown(payment_info['payment'], markdown_content)
+                        markdown_content.append("\n")
 
-                        # Add detailed payment content only if there are PLAs or encounters to check
+                    # Add detailed payment content only if there are PLAs or encounters to check
+                    if has_plas or has_encounters_to_check:
                         self._generate_payment_details(payment_info['payment'], payment_info['eft'], markdown_content, has_plas, has_encounters_to_check)
 
-                        markdown_content.append("</details>\n\n")
-                    else:
-                        # Just show the title without a collapsible section for Immediate Post or payments with no content
-                        markdown_content.append(f"* {payment_title}\n\n")
+                    # Add "It Should" specification for this payment (ALL payments get this)
+                    self._generate_it_should_section(payment_info['payment'], markdown_content)
+
+                    markdown_content.append("</details>\n\n")
             else:
                 markdown_content.append("No payments in this category.\n\n")
 
@@ -340,22 +340,22 @@ class MarkdownGenerator:
                 has_plas = pla_count > 0
                 has_encounters_to_check = encs_to_check_count > 0
 
-                # Show collapsible section only if there are PLAs or encounters to check, and it's not Immediate Post
-                if (has_plas or has_encounters_to_check) and payment_status != "Immediate Post":
-                    markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
+                # Show collapsible section for ALL payments - every payment gets "It Should"
+                markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
 
-                    # Add PLA amount breakdown if payment has PLAs
-                    if has_plas:
-                        self._generate_pla_amount_breakdown(payment, markdown_content)
-                        markdown_content.append("\n")
+                # Add PLA amount breakdown if payment has PLAs
+                if has_plas:
+                    self._generate_pla_amount_breakdown(payment, markdown_content)
+                    markdown_content.append("\n")
 
-                    # Add detailed payment content only if there are PLAs or encounters to check
+                # Add detailed payment content only if there are PLAs or encounters to check
+                if has_plas or has_encounters_to_check:
                     self._generate_payment_details(payment, eft, markdown_content, has_plas, has_encounters_to_check)
 
-                    markdown_content.append("</details>\n\n")  # Close payment
-                else:
-                    # Just show the title without a collapsible section for Immediate Post or payments with no content
-                    markdown_content.append(f"* {payment_title}\n\n")
+                # Add "It Should" specification for this payment (ALL payments get this)
+                self._generate_it_should_section(payment, markdown_content)
+
+                markdown_content.append("</details>\n\n")  # Close payment
 
             markdown_content.append("</details>\n\n")  # Close EFT
 
@@ -382,6 +382,435 @@ class MarkdownGenerator:
         markdown_content.append(f"* Payment Amount: ${payment_amount:,.2f}\n")
         markdown_content.append(f"* Other PLAs: ${pla_other_amts:,.2f}\n")
         markdown_content.append(f"* Ledger Balance: ${ledger_balance:,.2f}\n")
+
+    def _generate_it_should_section(self, payment: Dict, markdown_content: List[str]) -> None:
+        """
+        Generate the "It Should" section for a payment based on its status and actual content.
+        Creates context-aware specifications that only show relevant sections.
+
+        Args:
+            payment (Dict): Payment object with status and other details
+            markdown_content (List[str]): List to append markdown content to
+        """
+        payment_status = payment.get("status", "Unknown")
+
+        # Import the QA specifications
+        try:
+            from .qa_it_shoulds import PAYMENT_TYPE_SPECS
+        except ImportError:
+            print("   ⚠️ Warning: Could not import qa_it_shoulds module")
+            return
+
+        # Generate context-aware specification
+        it_should_spec = self._create_context_aware_it_should(payment, payment_status)
+
+        if it_should_spec:
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>It Should - {payment_status}</summary>\n\n")
+            markdown_content.append(it_should_spec)
+            markdown_content.append("\n\n</details>\n\n")
+        else:
+            # For unknown payment types, add a placeholder
+            markdown_content.append(f"<details markdown=\"1\">\n<summary>It Should - {payment_status}</summary>\n\n")
+            markdown_content.append(f"No specification available for payment type: {payment_status}\n")
+            markdown_content.append("\n</details>\n\n")
+
+    def _create_context_aware_it_should(self, payment: Dict, payment_status: str) -> str:
+        """
+        Create a context-aware "It Should" specification based on the payment's actual content.
+
+        Args:
+            payment (Dict): Payment object with PLAs and encounters
+            payment_status (str): Payment status/type
+
+        Returns:
+            str: Context-aware "It Should" specification
+        """
+        # Analyze the payment's actual content
+        has_plas = len(payment.get("plas", {}).get("pla_l6", [])) > 0 or len(payment.get("plas", {}).get("pla_other", [])) > 0
+        has_l6_plas = len(payment.get("plas", {}).get("pla_l6", [])) > 0
+        has_other_plas = len(payment.get("plas", {}).get("pla_other", [])) > 0
+        encs_to_check = payment.get("encs_to_check", {})
+
+        # Get all encounter types present in this payment
+        encounter_types = set()
+        for enc_data in encs_to_check.values():
+            encounter_types.update(enc_data.get("types", {}).keys())
+
+        # Categorize encounter types
+        not_posted_types = {"enc_payer_not_found", "multiple_to_one", "other_not_posted", "svc_no_match_clm", "chg_mismatch_cpt4"}
+        posted_types = {"appeal_has_adj", "chg_equal_adj", "secondary_n408_pr96", "secondary_co94_oa94", "secondary_mc_tricare_dshs", "tertiary", "22_no_123", "22_with_123"}
+
+        actual_not_posted = encounter_types.intersection(not_posted_types)
+        actual_posted = encounter_types.intersection(posted_types)
+
+        # Generate context-aware specification based on payment type
+        if payment_status == "Immediate Post":
+            return self._create_immediate_post_spec()
+        elif payment_status == "PLA Only":
+            return self._create_pla_only_spec(has_l6_plas, has_other_plas)
+        elif payment_status == "Quick Post":
+            return self._create_quick_post_spec(actual_posted, has_plas)
+        elif payment_status == "Full Post":
+            return self._create_full_post_spec(actual_posted)
+        elif payment_status == "Mixed Post":
+            return self._create_mixed_post_spec(has_plas, has_l6_plas, has_other_plas, actual_posted, actual_not_posted)
+        else:
+            return f"Context-aware specification not available for payment type: {payment_status}"
+
+    def _create_immediate_post_spec(self) -> str:
+        """Create specification for Immediate Post payments."""
+        return """* `{payment.encs_to_check}` = `[]`
+* `{payment.plas}` = `[]`
+* `{payment.is_balanced}` should be `True`
+* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `False`
+    * It should Find the Batch
+    * It should Update the Batch Totals
+    * It should Post the Batch
+    * It should update `{payment.posted}` = "Y"
+    * It should update `{payment.note}` = "Balanced-Batch Closed"
+    * It should Update the PMT Master
+* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `True`
+    * It should get all the `{payments}` **WHERE** `{payment.eft_num}` is the same
+        * **IF** `{payments.is_balanced}` = `True` for **ALL** `{payments}`
+            * It should Find the Batch
+            * It should Update the Batch Totals
+            * It should Post the Batch
+            * It should update `{payment.posted}` = "Y"
+            * It should update `{payment.note}` = "Balanced-Batch Closed"
+            * It should Update the PMT Master
+        * **IF** `{payments.is_balanced}` ≠ `True` for **ALL** `{payments}` **AND** `{payments.is_balanced}` = `True`
+            * It should Find the Batch
+            * It should Update the Batch Totals
+            * It should Post the Batch
+            * It should update `{payment.posted}` = "Y"
+            * It should update `{payment.note}` = "Balanced-Batch Not Closed"
+            * It should Update the PMT Master
+* **IF** `{payment.is_balanced}` = `False`
+    * It should update `{payment.posted}` = "N"
+    * It should update `{payment.note}` = "Not Balanced-Review"
+    * It should update `{run.status}` = "Failed\""""
+
+    def _create_pla_only_spec(self, has_l6_plas: bool, has_other_plas: bool) -> str:
+        """Create context-aware specification for PLA Only payments."""
+        spec_lines = []
+
+        # Basic conditions
+        spec_lines.append("* `{payment.encs_to_check}` = `[]`")
+        spec_lines.append("* `{payment.plas}` ≠ `[]`")
+        spec_lines.append("* `sum_of_plas` = the sum of `{code.amt}` for `{codes}` in `{payment.plas}`")
+
+        # Context-aware PLA handling
+        if has_l6_plas and not has_other_plas:
+            spec_lines.append("* **ONLY L6 PLAs present** - for each L6 code:")
+            spec_lines.append("    * It should add a new encounter to NextGen")
+            spec_lines.append("    * It should add the interest payment and interest adjustment to NextGen")
+            spec_lines.append("    * It should change the status to \"None\" if the payer is not \"Patient\"")
+            spec_lines.append("    * The payment **should be balanced** after adding the Interest")
+            spec_lines.append("    * It should update the change log with \"Added Interest\"")
+            spec_lines.append("    * `{payment.is_balanced}` should be `True`")
+        elif has_other_plas:
+            spec_lines.append("* **Non-L6 PLAs present**:")
+            spec_lines.append("    * `{payment.is_balanced}` should be `False`")
+            spec_lines.append("    * Only interest PLAs (L6) should result in balanced payments")
+
+        # Add balancing logic
+        spec_lines.extend(self._get_balancing_section())
+        spec_lines.extend(self._get_pla_not_balanced_section())
+
+        return "\n".join(spec_lines)
+
+    def _create_quick_post_spec(self, actual_posted: set, has_plas: bool) -> str:
+        """Create context-aware specification for Quick Post payments."""
+        spec_lines = []
+
+        spec_lines.append("* `{payment.encs_to_check}` ≠ `[]`")
+        if not has_plas:
+            spec_lines.append("* `{payment.plas}` = `[]`")
+
+        # Only show encounter handling for types actually present
+        if actual_posted:
+            spec_lines.append("* Encounter types present in this payment:")
+            spec_lines.extend(self._get_encounter_handling_sections(actual_posted))
+
+        spec_lines.append("* `{payment.is_balanced}` should be `True`")
+        spec_lines.extend(self._get_balancing_section())
+        spec_lines.extend(self._get_not_balanced_section())
+
+        return "\n".join(spec_lines)
+
+    def _create_full_post_spec(self, actual_posted: set) -> str:
+        """Create context-aware specification for Full Post payments."""
+        spec_lines = []
+
+        spec_lines.append("* `{payment.encs_to_check}` ≠ `[]`")
+        spec_lines.append("* `{payment.plas}` = `[]`")
+        spec_lines.append("* There are **NO** \"Not Posted\" encounters")
+
+        # Only show encounter handling for types actually present
+        if actual_posted:
+            spec_lines.append("* Encounter types present in this payment:")
+            spec_lines.extend(self._get_encounter_handling_sections(actual_posted))
+
+        spec_lines.append("* `{payment.is_balanced}` should be `True`")
+        spec_lines.extend(self._get_balancing_section())
+        spec_lines.extend(self._get_not_balanced_section())
+
+        return "\n".join(spec_lines)
+
+    def _create_mixed_post_spec(self, has_plas: bool, has_l6_plas: bool, has_other_plas: bool,
+                               actual_posted: set, actual_not_posted: set) -> str:
+        """Create context-aware specification for Mixed Post payments."""
+        spec_lines = []
+
+        spec_lines.append("* `{payment.encs_to_check}` ≠ `[]`")
+        spec_lines.append("* It should have at least one \"Not Posted\" encounter")
+        spec_lines.append("")
+
+        # Only show PLA section if there are PLAs
+        if has_plas:
+            spec_lines.append("### Provider Level Adjustments")
+            spec_lines.append("")
+            if has_l6_plas:
+                spec_lines.append("* **L6 PLAs present:**")
+                spec_lines.append("    * It should add a new encounter to NextGen")
+                spec_lines.append("    * It should add the interest payment and interest adjustment to NextGen")
+                spec_lines.append("    * It should change the status to \"None\" if the payer is not \"Patient\"")
+                spec_lines.append("    * The payment **should be balanced** after adding the Interest")
+                spec_lines.append("    * It should update the change log with \"Added Interest\"")
+            spec_lines.append("")
+
+        # Only show Posted Encounters section if there are posted encounters
+        if actual_posted:
+            spec_lines.append("### Posted Encounters")
+            spec_lines.append("")
+            spec_lines.extend(self._get_encounter_handling_sections(actual_posted))
+            spec_lines.append("")
+
+        # Only show Not Posted Encounters section if there are not posted encounters
+        if actual_not_posted:
+            spec_lines.append("### Not Posted Encounters")
+            spec_lines.append("")
+            spec_lines.extend(self._get_not_posted_handling_sections(actual_not_posted))
+            spec_lines.append("")
+
+        # Always show balancing for Mixed Post
+        spec_lines.append("### Balancing")
+        spec_lines.append("")
+        spec_lines.extend(self._get_mixed_post_balancing_section(has_plas))
+        spec_lines.extend(self._get_balancing_section())
+
+        return "\n".join(spec_lines)
+
+    def _get_encounter_handling_sections(self, encounter_types: set) -> List[str]:
+        """Get encounter handling sections for specific encounter types."""
+        sections = []
+
+        encounter_specs = {
+            "appeal_has_adj": [
+                "* **IF** `{enc.type}` = \"appeal_has_adj\"",
+                "    * It should zero out the adjustment in NextGen",
+                "    * It should update the Change Log with \"Zeroed out Adjustment on Appeal\""
+            ],
+            "chg_equal_adj": [
+                "* **IF** `{enc.type}` = \"chg_equal_adj\"",
+                "    * **IF** `{payer}` = \"WA ST L&I\"",
+                "        * **IF** `{code.code}` = \"CO119\" it should **NOT** zero out the adjustment or update the change log",
+                "        * **IF** `{code.code}` ≠ \"CO119\" it should",
+                "            * It should zero out the adjustment on NextGen",
+                "            * It should update the Change Log with \"Zeroed out Adjustment on Chg Equal Adj\"",
+                "    * **IF** `{payer}` ≠ \"WA ST L&I\"",
+                "        * It should zero out the adjustment on NextGen",
+                "        * It should update the Change Log with \"Zeroed out Adjustment on Chg Equal Adj\""
+            ],
+            "secondary_n408_pr96": [
+                "* **IF** `{enc.type}` = \"secondary_n408_pr96\"",
+                "    * It should have `{code.code}` = \"N408\" **AND** `{code.code}` = \"PR96\"",
+                "    * It should zero out the adjustment in NextGen",
+                "    * It should change the status to \"Settled moved to self\" in NextGen",
+                "    * It should add the \"N408\" to the reason codes in NextGen",
+                "    * It should update the Change Log with \"Zeroed out Adjustment, Non-Covered Deductible, Settled to Self\""
+            ],
+            "secondary_co94_oa94": [
+                "* **IF** `{enc.type}` = \"secondary_co94_oa94\"",
+                "    * It should update the adj field in next gen to `bal` + `adj`",
+                "    * It should update change log with \"Adjusted off patient balance on Secondary with CO94\""
+            ],
+            "secondary_mc_tricare_dshs": [
+                "* **IF** `{enc.type}` = \"secondary_mc_tricare_dshs\"",
+                "    * It should update the adj field in next gen to (`bal` - `pr`) + `adj`",
+                "    * It should update change log with \"Adjusted off patient balance on Secondary for `payer` payment\""
+            ],
+            "tertiary": [
+                "* **IF** `{enc.type}` = \"tertiary\"",
+                "    * It should update change log with \"Adjusted off patient balance on Secondary for `payer` payment\""
+            ],
+            "22_with_123": [
+                "* **IF** `{enc.type}` = \"22_with_123\" (Recoupment with matching encounters)",
+                "    * Process according to recoupment with recoupment rules"
+            ],
+            "22_no_123": [
+                "* **IF** `{enc.type}` = \"22_no_123\" (Recoupment without matching encounters)",
+                "    * Process according to reversal with no recoupment rules"
+            ]
+        }
+
+        for enc_type in sorted(encounter_types):
+            if enc_type in encounter_specs:
+                sections.extend(encounter_specs[enc_type])
+
+        return sections
+
+    def _get_not_posted_handling_sections(self, not_posted_types: set) -> List[str]:
+        """Get handling sections for specific not posted encounter types."""
+        sections = []
+
+        not_posted_specs = {
+            "other_not_posted": [
+                "* **IF** `{enc.type}` = \"other_not_posted\"",
+                "    * It should update the Change Log with the `service[\"desc\"]` as the Note",
+                "    * ***NOTE: The entire payment will not be balanced***"
+            ],
+            "enc_payer_not_found": [
+                "* **IF** `{enc.type}` = \"enc_payer_not_found\" **OR** the entire encounter is \"Not Posted\"",
+                "    * **IF** there is a \"Received Invalid Encounter Number Alert\" **OR** \"Received Pre-listed for Bad Debt Alert\" message",
+                "        * It should update the Change Log with the message",
+                "    * It should match the Policy Nbr to find the Payer",
+                "    * **IF** it does **NOT** find the matching Payer",
+                "        * It should add \"Patient\" as the Payer",
+                "        * It should post the payments to the service lines",
+                "        * It should update the Change Log with \"Added Unidentified Payer Encounter\"",
+                "        * It should go to the next `{enc}` in `{payment.encs_to_check}`",
+                "    * **IF** it **DOES** finds the matching Payer it should",
+                "        * It should update the Change Log with \"Added Found Payer Encounter\"",
+                "        * For each `service[\"cpt4\"]`, It should post the `service[\"cpt4\"]` payment in NextGen",
+                "        * It should follow the rules below for **After Payment Has Been Posted**"
+            ],
+            "multiple_to_one": [
+                "* **IF** `{enc.type}` =\"multiple_to_one\" **OR** \"svc_no_match_clm\"",
+                "    * It should post the `service[\"cpt4\"]` payment in NextGen",
+                "    * It should follow the rules below for **After Payment Has Been Posted**"
+            ],
+            "svc_no_match_clm": [
+                "* **IF** `{enc.type}` =\"multiple_to_one\" **OR** \"svc_no_match_clm\"",
+                "    * It should post the `service[\"cpt4\"]` payment in NextGen",
+                "    * It should follow the rules below for **After Payment Has Been Posted**"
+            ],
+            "chg_mismatch_cpt4": [
+                "* **IF** `{enc.type}` = \"chg_mismatch_cpt4\"",
+                "    * It should find the `cpt4` of the \"Not Posted\" in the service pair",
+                "    * It should find the `opposite_cpt4` in the service pair",
+                "    * If the `opposite_cpt4` is in NextGen",
+                "        * It should post the payment to the `opposite_cpt4` line",
+                "        * It should zero out the adjustment",
+                "        * It should set the status to \"Appeal\"",
+                "        * It should update the Change Log with \"Posted `cpt4` on `opposite_cpt4` Line\"",
+                "    * If the `cpt4` is in NextGen and the `opposite_cpt4` is not in NextGen",
+                "        * It should post the payment to the `cpt4` line",
+                "        * It should zero out the adjustment",
+                "        * It should set the status to \"Appeal\"",
+                "        * It should update the Change Log with \"Posted `cpt4` on Voided Line\"",
+                "    * If the `cpt4` and the `opposite_cpt4` are both not in NextGen",
+                "        * It should update the Change Log with \"Charge Mismatch on CPT4 no Matching Visit Codes in NextGen\"",
+                "        * It should mark it for TA/PS Review",
+                "    * It should go to the next `{enc}` in `{payment.encs_to_check}`"
+            ]
+        }
+
+        for not_posted_type in sorted(not_posted_types):
+            if not_posted_type in not_posted_specs:
+                sections.extend(not_posted_specs[not_posted_type])
+
+        return sections
+
+    def _get_balancing_section(self) -> List[str]:
+        """Get standard balancing section."""
+        return [
+            "* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `False`",
+            "    * It should Find the Batch",
+            "    * It should Update the Batch Totals",
+            "    * It should Post the Batch",
+            "    * It should update `{payment.posted}` = \"Y\"",
+            "    * It should update `{payment.note}` = \"Balanced-Batch Closed\"",
+            "    * It should Update the PMT Master",
+            "* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `True`",
+            "    * It should get all the `{payments}` **WHERE** `{payment.eft_num}` is the same",
+            "        * **IF** `{payments.is_balanced}` = `True` for **ALL** `{payments}`",
+            "            * It should Find the Batch",
+            "            * It should Update the Batch Totals",
+            "            * It should Post the Batch",
+            "            * It should update `{payment.posted}` = \"Y\"",
+            "            * It should update `{payment.note}` = \"Balanced-Batch Closed\"",
+            "            * It should Update the PMT Master",
+            "        * **IF** `{payments.is_balanced}` ≠ `True` for **ALL** `{payments}` **AND** `{payments.is_balanced}` = `True`",
+            "            * It should Find the Batch",
+            "            * It should Update the Batch Totals",
+            "            * It should Post the Batch",
+            "            * It should update `{payment.posted}` = \"Y\"",
+            "            * It should update `{payment.note}` = \"Balanced-Batch Not Closed\"",
+            "            * It should Update the PMT Master"
+        ]
+
+    def _get_not_balanced_section(self) -> List[str]:
+        """Get standard not balanced section."""
+        return [
+            "* **IF** `{payment.is_balanced}` = `False`",
+            "    * It should update `{payment.posted}` = \"N\"",
+            "    * It should update `{payment.note}` = \"Not Balanced-Review\"",
+            "    * It should update `{run.status}` = \"Failed\""
+        ]
+
+    def _get_pla_not_balanced_section(self) -> List[str]:
+        """Get PLA-specific not balanced section."""
+        return [
+            "* **IF** `{payment.is_balanced}` = `False`",
+            "    * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` = `sum_of_plas`",
+            "        * It should update `{payment.note}` = \"Not Balanced-PLAs\"",
+            "        * It should update `{payment.posted}` = \"N\"",
+            "        * It should update `{run.status}` = \"Success\"",
+            "    * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` ≠ `sum_of_plas`",
+            "        * It should update `{payment.note}` = \"Not Balanced-Review\"",
+            "        * It should update `{payment.posted}` = \"N\"",
+            "        * It should update `{run.status}` = \"Failed\"",
+            "        * It should Update the PMT Master"
+        ]
+
+    def _get_mixed_post_balancing_section(self, has_plas: bool) -> List[str]:
+        """Get Mixed Post specific balancing section."""
+        sections = [
+            "* **IF** there is **ANY** `{enc.type}` = \"other_not_posted\" **IN** `{encs_to_check}` **THEN** `{payment.is_balanced}` should be `False`",
+            "    * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` = `sum_other_not_posted` + `sum_of_plas` ✅",
+            "    * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` ≠ `sum_other_not_posted` + `sum_of_plas` ❌",
+            "    * **IF** `{payment.is_balanced}` = `False`",
+            "        * It should update `{payment.posted}` = \"N\"",
+            "        * It should update `{payment.note}` = \"Not Balanced-Review\"",
+            "        * It should update `{run.status}` = \"Failed\"",
+            "* **IF** there is **NO** `{enc.type}` = \"other_not_posted\" **IN** `{encs_to_check}`"
+        ]
+
+        if not has_plas:
+            sections.extend([
+                "    * **IF** `{payment.plas}` = `[]` **THEN** `{payment.is_balanced}` should be `True`",
+                "        * **IF** `{payment.is_balanced}` = `False`",
+                "            * It should update `{payment.posted}` = \"N\"",
+                "            * It should update `{payment.note}` = \"Not Balanced-Review\"",
+                "            * It should update `{run.status}` = \"Failed\""
+            ])
+        else:
+            sections.extend([
+                "    * **IF** `{payment.plas}` ≠ `[]` **AND** `{payment.plas}` is **ONLY** interest **THEN** `{payment.is_balanced}` should be `True`",
+                "    * **IF** `{payment.plas}` ≠ `[]` **AND** `{payment.plas}` is **NOT** only interest **THEN** `{payments.is_balanced}` = `False`",
+                "        * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` = `sum_of_plas`",
+                "            * It should update `{payment.note}` = \"Not Balanced-PLAs\"",
+                "            * It should update `{payment.posted}` = \"N\"",
+                "            * It should update `{run.status}` = \"Success\"",
+                "        * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` ≠ `sum_of_plas`",
+                "            * It should update `{payment.note}` = \"Not Balanced-Review\"",
+                "            * It should update `{payment.posted}` = \"N\"",
+                "            * It should update `{run.status}` = \"Failed\"",
+                "            * It should Update the PMT Master"
+            ])
+
+        return sections
 
     def _generate_payment_details(self, payment: Dict, eft: Dict, markdown_content: List[str], has_plas: bool = True, has_encounters_to_check: bool = True) -> None:
         """
