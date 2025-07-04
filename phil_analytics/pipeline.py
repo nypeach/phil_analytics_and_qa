@@ -272,13 +272,15 @@ class PhilPipeline:
 
     def _run_markdown_generation_step(self) -> None:
         """Run the markdown generation step."""
-        print(f"\n📝 Step 8: Generating markdown")
+        print(f"\n📝 Step 8: Generating markdown files")
         step_start_time = time.time()
 
         # Get missing encounter EFTs from the data object creator
         missing_encounter_efts = self.data_object_creator.get_missing_encounter_efts() if self.data_object_creator else []
 
         self.markdown_generator = MarkdownGenerator(self.payer_folder)
+
+        # Generate EFTs markdown
         self.markdown_file_path = self.markdown_generator.generate_efts_markdown(
             self.data_object,
             self.output_folder,
@@ -286,10 +288,16 @@ class PhilPipeline:
             self.analytics_results  # Pass analytics results
         )
 
+        # Generate QA It Shoulds markdown
+        self.it_shoulds_file_path = self.markdown_generator.generate_it_shoulds_markdown(
+            self.output_folder
+        )
+
         # Get markdown stats with missing encounter EFTs info
         markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object, missing_encounter_efts)
-        print(f"   📊 Generated markdown for {markdown_stats['total_efts']} EFTs")
+        print(f"   📊 Generated EFTs markdown for {markdown_stats['total_efts']} EFTs")
         print(f"   🔍 Found {markdown_stats['total_encounters_to_check']} encounters to check")
+        print(f"   📋 Generated QA It Shoulds markdown with payment type specifications")
         if missing_encounter_efts:
             print(f"   ⚠️ Found {len(missing_encounter_efts)} EFTs with missing encounters")
 
@@ -347,6 +355,7 @@ class PhilPipeline:
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
             'markdown_file': getattr(self, 'markdown_file_path', ''),
+            'it_shoulds_file': getattr(self, 'it_shoulds_file_path', ''),
         }
 
         return results
@@ -387,6 +396,7 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
         print(f"   • Charge Mismatch CPT4: {analytics_summary.get('charge_mismatch_cpt4_count', 0)}")
 
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")
-    print(f"   • Markdown file: {results['markdown_file']}")
+    print(f"   • EFTs markdown: {results['markdown_file']}")
+    print(f"   • QA It Shoulds markdown: {results['it_shoulds_file']}")
 
     return results

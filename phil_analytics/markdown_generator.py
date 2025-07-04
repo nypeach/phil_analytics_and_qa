@@ -3,6 +3,7 @@ PHIL Analytics and QA Library - Markdown Generator
 
 This module generates markdown files from the complete data object.
 Creates {filename}_efts.md with encounters that need review.
+Creates {filename}_it_shoulds.md with QA specifications for payment types.
 """
 
 from typing import Dict, List, Optional
@@ -14,6 +15,7 @@ class MarkdownGenerator:
     """
     Generates markdown files from the complete data object.
     Creates nested markdown with GitHub-style toggles for encounters that need review.
+    Also creates QA specification markdown files with payment type "It Shoulds".
     """
 
     def __init__(self, payer_name: str):
@@ -74,6 +76,48 @@ class MarkdownGenerator:
             f.write(''.join(markdown_content))
 
         print(f"   ✅ EFTs markdown saved to: {output_path}")
+        return str(output_path)
+
+    def generate_it_shoulds_markdown(self, output_dir: str = ".") -> str:
+        """
+        Generate {payer}_it_shoulds.md file with QA specifications for payment types only.
+
+        Args:
+            output_dir (str): Directory to save the markdown file
+
+        Returns:
+            str: Path to the saved markdown file
+        """
+        print(f"📝 Generating QA It Shoulds markdown for {self.payer_name}...")
+
+        # Import the QA specifications
+        try:
+            from .qa_it_shoulds import PAYMENT_TYPE_TOGGLES
+        except ImportError:
+            print("   ⚠️ Warning: Could not import qa_it_shoulds module")
+            return ""
+
+        markdown_content = []
+        markdown_content.append(f"# {self.payer_name} QA Specifications - \"It Shoulds\"\n\n")
+        markdown_content.append("This document defines the expected behaviors for different payment types.\n\n")
+
+        # Add payment type specifications with toggles - ONLY the payment types
+        markdown_content.append("## Payment Type Specifications\n\n")
+
+        # Define the order of payment statuses to match the standard order
+        payment_types = ["Immediate Post", "PLA Only", "Quick Post", "Full Post", "Mixed Post"]
+
+        for payment_type in payment_types:
+            if payment_type in PAYMENT_TYPE_TOGGLES:
+                markdown_content.append(f"{PAYMENT_TYPE_TOGGLES[payment_type]}\n\n")
+
+        # Save markdown file
+        output_path = Path(output_dir) / f"{self.payer_name}_it_shoulds.md"
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(''.join(markdown_content))
+
+        print(f"   ✅ QA It Shoulds markdown saved to: {output_path}")
         return str(output_path)
 
     def _generate_missing_encounter_efts_section(self, missing_encounter_efts: List[str], markdown_content: List[str]) -> None:

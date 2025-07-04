@@ -123,7 +123,8 @@ def quick_pipeline(payer_folder, max_files=None, input_folder=None, output_folde
         >>> result = quick_pipeline("Regence", max_files=3, save_combined=True)
         >>> print(f"Processed {result['file_summary']['total_rows']} rows")
         >>> print(f"Found {result['data_object_stats']['total_eft_nums']} EFTs")
-        >>> print(f"Generated markdown: {result['markdown_file']}")
+        >>> print(f"Generated EFTs markdown: {result['markdown_file']}")
+        >>> print(f"Generated QA It Shoulds markdown: {result['it_shoulds_file']}")
     """
     if PhilPipeline is None:
         raise ImportError("PhilPipeline could not be imported. Check your dependencies and file structure.")

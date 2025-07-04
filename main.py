@@ -48,6 +48,7 @@ def main(payer_folder, max_files=None, save_combined=True):
         print(f"   • Output folder: {results['output_folder']}")
         print(f"   • Scrubbed file: {results['scrubbed_file']}")
         print(f"   • EFTs markdown: {results['markdown_file']}")
+        print(f"   • QA It Shoulds markdown: {results['it_shoulds_file']}")
 
     except Exception as e:
         print(f"❌ Error running pipeline: {e}")
@@ -55,6 +56,6 @@ def main(payer_folder, max_files=None, save_combined=True):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    payer_folder = "Regence"
+    payer_folder = "Amerigroup"
     max_files = None
     main(payer_folder, max_files)

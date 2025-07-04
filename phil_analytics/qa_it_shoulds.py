@@ -140,7 +140,8 @@ mixed_post_components = [
     """* `{payment.encs_to_check}` ≠ `[]`
 * It should have at least one "Not Posted" encounter
 
-### Provider Level Adjustments
+<details markdown="1">
+<summary>Provider Level Adjustments</summary>
 
 * **IF** `{payment.plas}` ≠ `[]`
     * **IF** `{code.code}` for `{code}` in `{pla.codes}` = "L6"
@@ -150,7 +151,10 @@ mixed_post_components = [
     * The payment **should be balanced** after adding the Interest
     * It should update the change log with "Added Interest"
 
-### **Posted Encounters**
+</details>
+
+<details markdown="1">
+<summary>Posted Encounters</summary>
 
 * **IF** `{enc.type}` = "appeal_has_adj"
     * It should zero out the adjustment in NextGen
@@ -179,7 +183,10 @@ mixed_post_components = [
 * **IF** `{enc.type}` = "tertiary"
     * It should update change log with "Adjusted off patient balance on Secondary for `payer` payment"
 
-### **Not Posted Encounters**
+</details>
+
+<details markdown="1">
+<summary>Not Posted Encounters</summary>
 
 * **IF** `{enc.type}` = "other_not_posted"
     * It should update the Change Log with the `service["desc"]` as the Note
@@ -218,7 +225,10 @@ mixed_post_components = [
         * It should mark it for TA/PS Review
     * It should go to the next `{enc}` in `{payment.encs_to_check}`
 
-### **After Payment Has Been Posted**
+</details>
+
+<details markdown="1">
+<summary>After Payment Has Been Posted</summary>
 
 **FOR** each "Not Posted" service line added **WHERE** Payer ≠ "Patient"
 
@@ -258,7 +268,10 @@ mixed_post_components = [
     * It should update `{payment.note}` = "Adjusted off patient balance on Secondary for `payer` payment"
     * `changes` should be updated to {"cpt4": `fn_service["cpt4"]`, "changed": "Status", "from": `status`, "to": "Appeal", "note": `note`}
 
-### Balancing
+</details>
+
+<details markdown="1">
+<summary>Balancing</summary>
 
 * **IF** there is **ANY** `{enc.type}` = "other_not_posted" **IN** `{encs_to_check}` **THEN** `{payment.is_balanced}` should be `False`
     * **IF** the difference between `{payment.ledger_paid}` and `{payment.amt}` = `sum_other_not_posted` + `sum_of_plas` ✅
@@ -283,8 +296,11 @@ mixed_post_components = [
             * It should update `{payment.note}` = "Not Balanced-Review"
             * It should update `{payment.posted}` = "N"
             * It should update `{run.status}` = "Failed"
-            * It should Update the PMT Master""",
-    """* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `False`
+            * It should Update the PMT Master
+
+</details>
+
+* **IF** `{payment.is_balanced}` = `True` **AND** `{payment.is_split}` = `False`
     * It should Find the Batch
     * It should Update the Batch Totals
     * It should Post the Batch
