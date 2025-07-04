@@ -593,6 +593,12 @@ class MarkdownGenerator:
             spec_lines.extend(self._get_not_posted_handling_sections(actual_not_posted))
             spec_lines.append("")
 
+            # Add "After Payment Has Been Posted" section if there are not posted encounters
+            spec_lines.append("### After Payment Has Been Posted")
+            spec_lines.append("")
+            spec_lines.extend(self._get_after_payment_posted_section())
+            spec_lines.append("")
+
         # Always show balancing for Mixed Post
         spec_lines.append("### Balancing")
         spec_lines.append("")
@@ -721,6 +727,48 @@ class MarkdownGenerator:
                 sections.extend(not_posted_specs[not_posted_type])
 
         return sections
+
+    def _get_after_payment_posted_section(self) -> List[str]:
+        """Get the 'After Payment Has Been Posted' section for Mixed Post payments."""
+        return [
+            "**FOR** each \"Not Posted\" service line added **WHERE** Payer ≠ \"Patient\"",
+            "",
+            "* **IF** the `service[\"clm_status\"]` Begins with 22",
+            "    * **IF** there is another `encounter` with the same `encounter[\"num\"]` and a different `encounter[\"clm_status\"]`",
+            "        * JMS put what Process Reversals with Recoupment Function",
+            "    * **IF** there is **NOT** another `encounter` with the same `encounter[\"num\"]` and a different `encounter[\"clm_status\"]`",
+            "        * JMS put what the Process Reversal with No Recoupment Function does",
+            "* **IF** the `service[\"clm_status\"]` Does **NOT** begin with 22",
+            "    * **IF** there is another `encounter` with the same `encounter[\"num\"]` and a `encounter[\"clm_status\"]` begins with \"22\"",
+            "    * JMS put what Process Reversals with Recoupment Function",
+            "* **IF** the `NG.Status` = \"Appeal\"",
+            "    * It should zero out the adjustment in NextGen",
+            "    * It should update the Change Log with `{service.cpt4}`, \"Adjusted\", `{service.adj_amt}`, \"0.00\", \"Zeroed out Adjustment on Appeal\"",
+            "* **IF** `NG.Qty/Charges` = `NG.Adj`",
+            "    * **IF** `{payer}` = \"WA ST L&I\"",
+            "        * **IF** `{code.code}` = \"CO119\" it should **NOT** zero out the adjustment or update the change log",
+            "        * **IF** `{code.code}` ≠ \"CO119\" it should",
+            "            * It should zero out the adjustment on NextGen",
+            "            * It should update the Change Log with `{service.cpt4}`, \"Adjusted\", `{service.adj_amt}`, \"0.00\", \"Zeroed out Adjustment on Chg Equal Adj\"",
+            "    * **IF** `{payer}` ≠ \"WA ST L&I\"",
+            "        * It should zero out the adjustment on NextGen",
+            "        * It should update the Change Log with `{service.cpt4}`, \"Adjusted\", `{service.adj_amt}`, \"0.00\", \"Zeroed out Adjustment on Chg Equal Adj\"",
+            "* **IF** `{service.clm_status}` does not begin with \"22\" and does begin with \"2\" or \"20\" **AND** `{code.code}` = \"N408\" **AND** `{code.code}` = \"PR96\" **AND** (CO45 **OR** OA23)",
+            "    * It should have `{code.code}` = \"N408\" **AND** `{code.code}` = \"PR96\"",
+            "    * It should zero out the adjustment in NextGen",
+            "    * It should change the status to \"Settled moved to self\" in NextGen",
+            "    * It should add the \"N408\" to the reason codes in NextGen",
+            "    * It should update the Change Log with `{service.cpt4}`, \"Adjusted\", `{service.adj_amt}`, \"0.00\", \"Zeroed out Adjustment, Non-Covered Deductible, Settled to Self\"",
+            "* **IF** `{service.clm_status}` does not begin with \"22\" and does begin with \"2\" or \"20\" **AND** `{code.code}` = \"CO94\" **OR** \"OA94\"",
+            "    * It should update the adj field in next gen to `bal` + `adj`",
+            "    * It should update `{payment.note}` = \"Adjusted off patient balance on Secondary with CO94\"",
+            "* **IF** `{service.clm_status}` does not begin with \"22\" and does begin with \"2\" or \"20\" **AND** `{run.payer}` = \"Medicare\" **OR** \"Tricare\" **OR** \"DSHS\"",
+            "    * It should update the adj field in next gen to (`bal` - `pr`) + `adj`",
+            "    * It should update `{payment.note}` = \"Adjusted off patient balance on Secondary for `payer` payment\"",
+            "* **IF** `{service.clm_status}` begins with \"3\"",
+            "    * It should update `{payment.note}` = \"Adjusted off patient balance on Secondary for `payer` payment\"",
+            "    * `changes` should be updated to {\"cpt4\": `fn_service[\"cpt4\"]`, \"changed\": \"Status\", \"from\": `status`, \"to\": \"Appeal\", \"note\": `note`}"
+        ]
 
     def _get_balancing_section(self) -> List[str]:
         """Get standard balancing section."""

@@ -1300,6 +1300,13 @@ class PaymentTagger:
             "22_with_123"
         ]
 
+        # Define Quick Post specific encounter types
+        self.quick_post_types = [
+            "appeal_has_adj",
+            "chg_equal_adj",
+            "secondary_n408_pr96"
+        ]
+
     def tag_payments(self, data_object: Dict) -> Dict:
         """
         Tag all payments and EFTs in the data object.
@@ -1329,12 +1336,13 @@ class PaymentTagger:
         """
         Determine payment status based on PLAs and encounters to check.
 
-        Payment Statuses:
-        - "Immediate Post": no plas, no encs_to_check
-        - "PLA Only": has plas, no encs_to_check
-        - "Mixed Post": has at least one enc_to_check in not_posted_list
-        - "Full Post": no plas, no encs_to_check in not_posted_list, has at least one encs_to_check in check_ng_and_data or reversals
-        - "Quick Post": any payment not in one of the statuses above
+        Payment Statuses (in order of priority):
+        1. "Immediate Post": no plas, no encs_to_check
+        2. "PLA Only": has plas, no encs_to_check
+        3. "Mixed Post": has at least one enc_to_check in not_posted_list
+        4. "Quick Post": no plas, has ONLY quick_post_types encounters
+        5. "Full Post": no plas, has encounters in check_ng_and_data or reversals (but not not_posted_list)
+        6. "Unknown": any payment not fitting above categories
 
         Args:
             payment (Dict): Payment object
@@ -1349,30 +1357,37 @@ class PaymentTagger:
         # Get all encounter types that need to be checked
         encs_to_check = payment.get("encs_to_check", {})
 
-        # If no encounters to check
-        if not encs_to_check:
-            if has_plas:
-                return "PLA Only"
-            else:
-                return "Immediate Post"
+        # 1. Immediate Post: no plas, no encounters to check
+        if not has_plas and not encs_to_check:
+            return "Immediate Post"
 
-        # Get all encounter types from encs_to_check
-        all_encounter_types = set()
-        for enc_data in encs_to_check.values():
-            all_encounter_types.update(enc_data.get("types", {}).keys())
+        # 2. PLA Only: has plas, no encounters to check
+        if has_plas and not encs_to_check:
+            return "PLA Only"
 
-        # Check for Mixed Post (has at least one enc_to_check in not_posted_list)
-        if any(enc_type in self.not_posted_list for enc_type in all_encounter_types):
-            return "Mixed Post"
+        # If there are encounters to check, get all encounter types
+        if encs_to_check:
+            all_encounter_types = set()
+            for enc_data in encs_to_check.values():
+                all_encounter_types.update(enc_data.get("types", {}).keys())
 
-        # Check for Full Post (no plas, no not_posted, has check_ng_and_data or reversals)
-        if not has_plas:
-            has_check_ng_or_reversals = (
-                any(enc_type in self.check_ng_and_data for enc_type in all_encounter_types) or
-                any(enc_type in self.reversals for enc_type in all_encounter_types)
-            )
-            if has_check_ng_or_reversals:
-                return "Full Post"
+            # 3. Mixed Post: has at least one enc_to_check in not_posted_list
+            if any(enc_type in self.not_posted_list for enc_type in all_encounter_types):
+                return "Mixed Post"
 
-        # Default to Quick Post for any payment not in the above categories
-        return "Quick Post"
+            # For remaining checks, payment should not have PLAs
+            if not has_plas:
+                # 4. Quick Post: no plas, has ONLY quick_post_types encounters
+                if all_encounter_types and all_encounter_types.issubset(set(self.quick_post_types)):
+                    return "Quick Post"
+
+                # 5. Full Post: no plas, has encounters in check_ng_and_data or reversals
+                has_check_ng_or_reversals = (
+                    any(enc_type in self.check_ng_and_data for enc_type in all_encounter_types) or
+                    any(enc_type in self.reversals for enc_type in all_encounter_types)
+                )
+                if has_check_ng_or_reversals:
+                    return "Full Post"
+
+        # 6. Fallback for any payment not fitting the above categories
+        return "Unknown"
