@@ -288,16 +288,11 @@ class PhilPipeline:
             self.analytics_results  # Pass analytics results
         )
 
-        # Generate QA It Shoulds markdown
-        self.it_shoulds_file_path = self.markdown_generator.generate_it_shoulds_markdown(
-            self.output_folder
-        )
 
         # Get markdown stats with missing encounter EFTs info
         markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object, missing_encounter_efts)
         print(f"   📊 Generated EFTs markdown for {markdown_stats['total_efts']} EFTs")
         print(f"   🔍 Found {markdown_stats['total_encounters_to_check']} encounters to check")
-        print(f"   📋 Generated QA It Shoulds markdown with payment type specifications")
         if missing_encounter_efts:
             print(f"   ⚠️ Found {len(missing_encounter_efts)} EFTs with missing encounters")
 
@@ -355,7 +350,6 @@ class PhilPipeline:
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
             'markdown_file': getattr(self, 'markdown_file_path', ''),
-            'it_shoulds_file': getattr(self, 'it_shoulds_file_path', ''),
         }
 
         return results
@@ -397,6 +391,5 @@ def test_pipeline(payer_folder: str = "Regence", max_files: int = 3) -> Dict[str
 
     print(f"   • Runtime: {format_runtime(results['total_runtime'])}")
     print(f"   • EFTs markdown: {results['markdown_file']}")
-    print(f"   • QA It Shoulds markdown: {results['it_shoulds_file']}")
 
     return results

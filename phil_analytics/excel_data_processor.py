@@ -299,7 +299,7 @@ class ExcelDataObjectCreator:
             Dict: Payment object with all attributes
         """
         # Parse the File column to get the authoritative payment information
-        practice_id, pmt_num, payment_amount = self._parse_file_column(pmt_rows)
+        practice_id, pmt_num, payment_amount, file_date = self._parse_file_column(pmt_rows)
 
         # Get PLA rows for this payment
         pla_rows = self.get_pla_rows(pmt_rows)
@@ -321,6 +321,7 @@ class ExcelDataObjectCreator:
             "practice_id": str(practice_id),
             "num": str(pmt_num),
             "amt": payment_amount,
+            "file_date": str(file_date),  # File date extracted from File column
             "status": "",  # Will be set by PaymentTagger
             "plas": plas,
             "pla_l6_amts": pla_amounts["pla_l6_amts"],  # Sum of L6 PLA amounts
@@ -331,9 +332,9 @@ class ExcelDataObjectCreator:
 
         return payment
 
-    def _parse_file_column(self, pmt_rows: pd.DataFrame) -> tuple[str, str, float]:
+    def _parse_file_column(self, pmt_rows: pd.DataFrame) -> tuple[str, str, float, str]:
         """
-        Parse the File column to extract practice_id, payment_number, and payment_amount.
+        Parse the File column to extract practice_id, payment_number, payment_amount, and file_date.
 
         File format: {WS_ID}_{WAYSTAR ID}_{AMT}_{CHK NBR}_{TYPE}_{FILE_DATE}
         Example: 207008_SB542_35.03_1525153B100018112000_ACH_20250603
@@ -342,11 +343,11 @@ class ExcelDataObjectCreator:
             pmt_rows (pd.DataFrame): All rows for this payment
 
         Returns:
-            tuple[str, str, float]: (practice_id, payment_number, payment_amount)
+            tuple[str, str, float, str]: (practice_id, payment_number, payment_amount, file_date)
         """
         if 'File' not in pmt_rows.columns:
             print(f"   ⚠️ Warning: No 'File' column found in payment rows")
-            return "", "", 0.0
+            return "", "", 0.0, ""
 
         # Get the first non-empty file name (should be the same for all rows in this payment)
         file_names = pmt_rows['File'].astype(str).str.strip()
@@ -354,7 +355,7 @@ class ExcelDataObjectCreator:
 
         if len(file_names) == 0:
             print(f"   ⚠️ Warning: No file names found in payment rows")
-            return "", "", 0.0
+            return "", "", 0.0, ""
 
         file_name = file_names.iloc[0]
 
@@ -364,7 +365,7 @@ class ExcelDataObjectCreator:
 
             if len(parts) < 6:
                 print(f"   ⚠️ Warning: File name format unexpected - expected 6 parts, got {len(parts)}: {file_name}")
-                return "", "", 0.0
+                return "", "", 0.0, ""
 
             # Extract the components
             ws_id = parts[0].strip()              # WS_ID (practice identifier)
@@ -385,12 +386,13 @@ class ExcelDataObjectCreator:
             print(f"      • Practice ID: {practice_id}")
             print(f"      • Payment Num: {pmt_num}")
             print(f"      • Amount: ${payment_amount:,.2f}")
+            print(f"      • File Date: {file_date}")
 
-            return practice_id, pmt_num, payment_amount
+            return practice_id, pmt_num, payment_amount, file_date
 
         except (ValueError, TypeError, IndexError) as e:
             print(f"   ❌ Error parsing file name '{file_name}': {e}")
-            return "", "", 0.0
+            return "", "", 0.0, ""
 
     def _calculate_pla_amounts(self, pla_rows: pd.DataFrame) -> Dict[str, float]:
         """

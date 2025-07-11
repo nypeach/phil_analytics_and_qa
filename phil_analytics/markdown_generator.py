@@ -30,6 +30,7 @@ class MarkdownGenerator:
     def generate_efts_markdown(self, data_object: Dict, output_dir: str = ".", missing_encounter_efts: Optional[List[str]] = None, analytics_results: Optional[Dict] = None) -> str:
         """
         Generate {payer}_efts.md file with encounters that need review.
+        Also generates separate files for each file date: {payer}_efts_{file_date}.md
 
         Args:
             data_object (Dict): Complete data object with all EFTs, payments, encounters
@@ -42,6 +43,17 @@ class MarkdownGenerator:
         """
         print(f"📝 Generating EFTs markdown for {self.payer_name}...")
 
+        # Generate main combined file
+        main_file_path = self._generate_main_efts_file(data_object, output_dir, missing_encounter_efts, analytics_results)
+        
+        # TODO: Comment out file date splitting for now to reduce file sizes
+        # Generate separate files by file date
+        # self._generate_efts_by_file_date(data_object, output_dir, missing_encounter_efts, analytics_results)
+
+        return main_file_path
+    
+    def _generate_main_efts_file(self, data_object: Dict, output_dir: str, missing_encounter_efts: Optional[List[str]], analytics_results: Optional[Dict]) -> str:
+        """Generate the main combined EFTs markdown file."""
         markdown_content = []
         markdown_content.append(f"# {self.payer_name} EFTs Analysis\n\n")
 
@@ -77,6 +89,95 @@ class MarkdownGenerator:
 
         print(f"   ✅ EFTs markdown saved to: {output_path}")
         return str(output_path)
+    
+    def _generate_efts_by_file_date(self, data_object: Dict, output_dir: str, missing_encounter_efts: Optional[List[str]], analytics_results: Optional[Dict]) -> None:
+        """Generate separate EFTs markdown files for each file date."""
+        print(f"📊 Generating EFTs markdown files by file date...")
+        
+        # Group data by file date
+        file_date_groups = self._group_data_by_file_date(data_object)
+        
+        if not file_date_groups:
+            print("   ⚠️ No file dates found in data - skipping file date-based generation")
+            return
+        
+        for file_date, file_date_data in file_date_groups.items():
+            print(f"   📅 Generating file for date: {file_date}")
+            
+            # Create markdown content for this file date
+            markdown_content = []
+            markdown_content.append(f"# {self.payer_name} EFTs Analysis - {file_date}\n\n")
+            
+            # Note: For now, we include missing encounter EFTs in all file date files
+            # This could be improved by tracking file dates for missing encounters
+            if missing_encounter_efts and len(missing_encounter_efts) > 0:
+                self._generate_missing_encounter_efts_section(missing_encounter_efts, markdown_content)
+            
+            # Note: For now, we include analytics results in all file date files
+            # This could be improved by filtering analytics results by file date
+            if analytics_results:
+                self._generate_mixed_post_scenarios_section(analytics_results, markdown_content)
+            
+            # Separate EFTs by split status for this file date
+            not_split_efts = {}
+            split_efts = {}
+            
+            for eft_num, eft in file_date_data.items():
+                if eft['is_split']:
+                    split_efts[eft_num] = eft
+                else:
+                    not_split_efts[eft_num] = eft
+            
+            # Generate "EFTs - Not Split" section grouped by payment status
+            self._generate_not_split_section(not_split_efts, markdown_content)
+            
+            # Generate "EFTs - Split" section grouped by EFT
+            self._generate_split_section(split_efts, markdown_content)
+            
+            # Save markdown file for this file date
+            output_path = Path(output_dir) / f"{self.payer_name}_efts_{file_date}.md"
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(''.join(markdown_content))
+            
+            print(f"   ✅ EFTs markdown for {file_date} saved to: {output_path}")
+    
+    def _group_data_by_file_date(self, data_object: Dict) -> Dict[str, Dict]:
+        """
+        Group the data object by file date extracted from payment objects.
+        
+        Args:
+            data_object (Dict): Complete data object with all EFTs, payments, encounters
+            
+        Returns:
+            Dict[str, Dict]: Dictionary with file_date as key and filtered data_object as value
+        """
+        file_date_groups = {}
+        
+        for eft_num, eft in data_object.items():
+            for payment_key, payment in eft['payments'].items():
+                # Extract file date from the payment object
+                file_date = payment.get('file_date', '')
+                
+                if file_date:
+                    # Initialize file date group if it doesn't exist
+                    if file_date not in file_date_groups:
+                        file_date_groups[file_date] = {}
+                    
+                    # Add this EFT to the file date group
+                    if eft_num not in file_date_groups[file_date]:
+                        file_date_groups[file_date][eft_num] = {
+                            'eft_num': eft['eft_num'],
+                            'payer': eft['payer'],
+                            'is_split': eft['is_split'],
+                            'status': eft['status'],
+                            'payments': {}
+                        }
+                    
+                    # Add this payment to the EFT in the file date group
+                    file_date_groups[file_date][eft_num]['payments'][payment_key] = payment
+        
+        return file_date_groups
 
     def generate_it_shoulds_markdown(self, output_dir: str = ".") -> str:
         """
@@ -214,6 +315,19 @@ class MarkdownGenerator:
                 markdown_content.append(f"* **Split EFT:** {max_eft['eft_num']} - {max_eft['total_encs_to_check']}\n")
 
             markdown_content.append("\n")
+            
+            # Add link to It Shoulds after Max Encounters section
+            self._generate_it_shoulds_link_section(markdown_content)
+
+    def _generate_it_shoulds_link_section(self, markdown_content: List[str]) -> None:
+        """
+        Generate the link to the "It Shoulds" Notion page.
+        
+        Args:
+            markdown_content (List[str]): List to append markdown content to
+        """
+        markdown_content.append("### Link to \"It Shoulds\"\n\n")
+        markdown_content.append("[PS1D - PHIL \"It Should\"](https://www.notion.so/thoughtfulautomation/PS1D-PHIL-It-Should-1f8f43a78fa48033931ceded894c60ce)\n\n")
 
     def _generate_not_split_section(self, not_split_efts: Dict, markdown_content: List[str]) -> None:
         """
@@ -261,6 +375,7 @@ class MarkdownGenerator:
             status_title = f"{status} ({len(payments)})"
             markdown_content.append(f"<details markdown=\"1\">\n<summary>{status_title}</summary>\n\n")
 
+
             if payments:
                 # Sort payments by practice_id then pmt_num
                 sorted_payments = sorted(payments, key=lambda x: (x['practice_id'], x['pmt_num']))
@@ -272,9 +387,8 @@ class MarkdownGenerator:
                     # Check if there's any content to show
                     has_plas = payment_info['pla_count'] > 0
                     has_encounters_to_check = payment_info['encs_to_check_count'] > 0
-                    payment_status = payment_info['payment'].get('status', 'Unknown')
 
-                    # Show collapsible section for ALL payments - every payment gets "It Should"
+                    # Show collapsible section for ALL payments - NO individual "It Should" sections
                     markdown_content.append(f"<details markdown=\"1\">\n<summary>{payment_title}</summary>\n\n")
 
                     # Add PLA amount breakdown if payment has PLAs
@@ -286,8 +400,8 @@ class MarkdownGenerator:
                     if has_plas or has_encounters_to_check:
                         self._generate_payment_details(payment_info['payment'], payment_info['eft'], markdown_content, has_plas, has_encounters_to_check)
 
-                    # Add "It Should" specification for this payment (ALL payments get this)
-                    self._generate_it_should_section(payment_info['payment'], markdown_content)
+                    # REMOVED: Individual "It Should" sections to reduce file size
+                    # self._generate_it_should_section(payment_info['payment'], markdown_content)
 
                     markdown_content.append("</details>\n\n")
             else:
@@ -296,6 +410,7 @@ class MarkdownGenerator:
             markdown_content.append("</details>\n\n")  # Close status group
 
         markdown_content.append("</details>\n\n")  # Close EFTs - Not Split
+
 
     def _generate_split_section(self, split_efts: Dict, markdown_content: List[str]) -> None:
         """
@@ -352,8 +467,8 @@ class MarkdownGenerator:
                 if has_plas or has_encounters_to_check:
                     self._generate_payment_details(payment, eft, markdown_content, has_plas, has_encounters_to_check)
 
-                # Add "It Should" specification for this payment (ALL payments get this)
-                self._generate_it_should_section(payment, markdown_content)
+                # REMOVED: Individual "It Should" sections to reduce file size
+                # self._generate_it_should_section(payment, markdown_content)
 
                 markdown_content.append("</details>\n\n")  # Close payment
 
@@ -862,8 +977,8 @@ class MarkdownGenerator:
 
     def _generate_payment_details(self, payment: Dict, eft: Dict, markdown_content: List[str], has_plas: bool = True, has_encounters_to_check: bool = True) -> None:
         """
-        Generate the detailed content for a payment (PLAs and Encounters).
-        Only generates sections that have content.
+        Generate the detailed content for a payment (PLAs and Encounters) using bullet list format.
+        Payment sections are organized as bullet lists with proper indentation for better Notion import.
 
         Args:
             payment (Dict): Payment object
@@ -872,48 +987,40 @@ class MarkdownGenerator:
             has_plas (bool): Whether this payment has PLAs
             has_encounters_to_check (bool): Whether this payment has encounters to check
         """
-        # PLA section - only show if there are PLAs
+        # PLA section - only show if there are PLAs, using bullet format
         if has_plas:
             pla_l6_count = len(payment["plas"]["pla_l6"])
             pla_other_count = len(payment["plas"]["pla_other"])
-            pla_title = f"PLAs (L6: {pla_l6_count}, Other: {pla_other_count})"
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{pla_title}</summary>\n\n")
+            
+            if pla_l6_count > 0 or pla_other_count > 0:
+                markdown_content.append(f"* **PLAs** (L6: {pla_l6_count}, Other: {pla_other_count})\n")
 
-            if payment["plas"]["pla_l6"]:
-                markdown_content.append("**L6 PLAs:**\n")
-                for pla in payment["plas"]["pla_l6"]:
-                    markdown_content.append(f"- {pla}\n")
-                markdown_content.append("\n")
+                if payment["plas"]["pla_l6"]:
+                    markdown_content.append("  * **L6 PLAs:**\n")
+                    for pla in payment["plas"]["pla_l6"]:
+                        markdown_content.append(f"    * {pla}\n")
 
-            if payment["plas"]["pla_other"]:
-                markdown_content.append("**Other PLAs:**\n")
-                for pla in payment["plas"]["pla_other"]:
-                    markdown_content.append(f"- {pla}\n")
-                markdown_content.append("\n")
+                if payment["plas"]["pla_other"]:
+                    markdown_content.append("  * **Other PLAs:**\n")
+                    for pla in payment["plas"]["pla_other"]:
+                        markdown_content.append(f"    * {pla}\n")
 
-            markdown_content.append("</details>\n\n")
-
-        # Encounters section - only show if there are encounters that need review
+        # Encounters section - only show if there are encounters that need review, using bullet format
         if has_encounters_to_check:
             encs_to_check = payment.get("encs_to_check", {})
-            encounters_title = f"Encounters to Check ({len(encs_to_check)})"
-            markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounters_title}</summary>\n\n")
+            if len(encs_to_check) > 0:
+                markdown_content.append(f"* **Encounters to Check** ({len(encs_to_check)})\n")
 
-            for enc_key, enc_check_data in encs_to_check.items():
-                # Count number of types to check for this encounter
-                review_count = len(enc_check_data['types'])
+                for enc_key, enc_check_data in encs_to_check.items():
+                    # Count number of types to check for this encounter
+                    review_count = len(enc_check_data['types'])
+                    
+                    markdown_content.append(f"  * **Encounter:** {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Review: {review_count})\n")
 
-                encounter_title = f"Encounter: {enc_check_data['num']} (Status: {enc_check_data['clm_status']}, Review: {review_count})"
-                markdown_content.append(f"<details markdown=\"1\">\n<summary>{encounter_title}</summary>\n\n")
-
-                # Add encounter analysis summary
-                for enc_type, cpt4_list in enc_check_data['types'].items():
-                    cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
-                    markdown_content.append(f"- {enc_type}: {cpt4_str}\n")
-
-                markdown_content.append("\n</details>\n\n")
-
-            markdown_content.append("</details>\n\n")
+                    # Add encounter analysis as sub-bullets
+                    for enc_type, cpt4_list in enc_check_data['types'].items():
+                        cpt4_str = ", ".join(cpt4_list) if cpt4_list else "No CPT4"
+                        markdown_content.append(f"    * {enc_type}: {cpt4_str}\n")
 
     def generate_summary_stats(self, data_object: Dict, missing_encounter_efts: Optional[List[str]] = None) -> Dict:
         """

@@ -35,6 +35,19 @@ not_balanced_handling = """* **IF** `{payment.is_balanced}` = `False`
     * It should update `{payment.note}` = "Not Balanced-Review"
     * It should update `{run.status}` = "Failed\""""
 
+provider_level_adjustments = """<details markdown="1">
+<summary>Provider Level Adjustments</summary>
+
+* **IF** `{payment.plas}` ≠ `[]`
+    * **IF** `{code.code}` for `{code}` in `{pla.codes}` = "L6"
+    * It should add a new encounter to NextGen
+    * It should add the interest payment and interest adjustment to NextGen
+    * It should change the status to "None" if the payer is not "Patient"
+    * The payment **should be balanced** after adding the Interest
+    * It should update the change log with "Added Interest"
+
+</details>"""
+
 # Payment type specifications using composable components
 immediate_post_components = [
     """* `{payment.encs_to_check}` = `[]`
@@ -75,8 +88,9 @@ pla_only_components = [
 
 quick_post_components = [
     """* `{payment.encs_to_check}` ≠ `[]`
-* `{payment.plas}` = `[]`
-* It should **ONLY** have `{enc.type}` = "appeal_has_adj" **OR** "chg_equal_adj" **OR** "secondary_n408_pr96"
+* `{payment.plas}` = `[]`""",
+    provider_level_adjustments,
+    """* It should **ONLY** have `{enc.type}` = "appeal_has_adj" **OR** "chg_equal_adj" **OR** "secondary_n408_pr96"
     * **IF** `{enc.type}` = "appeal_has_adj"
         * It should zero out the adjustment in NextGen
         * It should update the Change Log with `{service.cpt4}`, "Adjusted", `{service.adj_amt}`, "0.00", "Zeroed out Adjustment on Appeal"
@@ -103,8 +117,9 @@ quick_post_components = [
 full_post_components = [
     """* `{payment.encs_to_check}` ≠ `[]`
 * `{payment.plas}` = `[]`
-* There are **NO** "Not Posted" encounters
-* It should **ONLY** have `{enc.type}` = "appeal_has_adj" **OR** "chg_equal_adj" **OR** "secondary_n408_pr96" **OR** "secondary_co94_oa94" **OR** "secondary_mc_tricare_dshs" **OR** "tertiary"
+* There are **NO** "Not Posted" encounters""",
+    provider_level_adjustments,
+    """* It should **ONLY** have `{enc.type}` = "appeal_has_adj" **OR** "chg_equal_adj" **OR** "secondary_n408_pr96" **OR** "secondary_co94_oa94" **OR** "secondary_mc_tricare_dshs" **OR** "tertiary"
     * **IF** `{enc.type}` = "appeal_has_adj"
         * It should zero out the adjustment in NextGen
         * It should update the Change Log with "Zeroed out Adjustment on Appeal"
