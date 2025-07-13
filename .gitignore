@@ -5,6 +5,7 @@ config.py
 data/
 *.xlsx
 *.xls
+text.txt
 
 # Python
 __pycache__/
