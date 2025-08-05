@@ -45,28 +45,6 @@ class MarkdownGenerator:
 
         return main_file_path
 
-    def generate_filtered_efts_markdown(self, data_object: Dict, output_dir: str = ".", missing_encounter_efts: Optional[List[str]] = None, analytics_results: Optional[Dict] = None) -> str:
-        """
-        Generate {payer}_efts_filtered.md file from a pre-filtered data object.
-        The filtering should have been done at the data object creation level.
-
-        Args:
-            data_object (Dict): Pre-filtered data object with only desired EFTs
-            output_dir (str): Directory to save the markdown file
-            missing_encounter_efts (List[str], optional): List of EFT NUMs with missing encounters/charges
-            analytics_results (Dict, optional): Analytics results from AnalyticsProcessor
-
-        Returns:
-            str: Path to the saved markdown file
-        """
-        print(f"📝 Generating filtered EFTs markdown for {self.payer_name}...")
-        print(f"   📊 Processing {len(data_object)} filtered EFTs")
-
-        # Generate filtered file using the same structure as main file
-        filtered_file_path = self._generate_filtered_efts_file(data_object, output_dir, missing_encounter_efts, analytics_results)
-
-        return filtered_file_path
-
     def _generate_main_efts_file(self, data_object: Dict, output_dir: str, missing_encounter_efts: Optional[List[str]], analytics_results: Optional[Dict]) -> str:
         """Generate the main combined EFTs markdown file."""
         markdown_content = []
@@ -504,61 +482,3 @@ class MarkdownGenerator:
                     stats['not_split_by_status'][payment_status] += 1
 
         return stats
-
-
-    def _generate_filtered_efts_file(self, filtered_data_object: Dict, output_dir: str, missing_encounter_efts: Optional[List[str]], analytics_results: Optional[Dict]) -> str:
-        """Generate the filtered EFTs markdown file."""
-        markdown_content = []
-        markdown_content.append(f"# {self.payer_name} EFTs Analysis - Filtered\n\n")
-
-        # Add info about the filter (show which EFTs are included)
-        eft_list = ', '.join(sorted(filtered_data_object.keys()))
-        markdown_content.append(f"**Filtered EFTs ({len(filtered_data_object)}):** {eft_list}\n\n")
-
-        # Add link to It Shoulds at the very top
-        self._generate_it_shoulds_link_section(markdown_content)
-
-        # Filter missing encounter EFTs if provided
-        filtered_missing_encounter_efts = []
-        if missing_encounter_efts:
-            for eft_num in missing_encounter_efts:
-                if eft_num in filtered_data_object:
-                    filtered_missing_encounter_efts.append(eft_num)
-
-        # Add missing encounter/charge EFTs section if any exist
-        if filtered_missing_encounter_efts:
-            self._generate_missing_encounter_charge_efts_section(filtered_missing_encounter_efts, markdown_content)
-
-        # Add analytics results if provided (they will already be filtered since they're based on the filtered data object)
-        if analytics_results:
-            self._generate_no_status_22_scenarios_section(analytics_results, markdown_content)
-            self._generate_mixed_post_scenarios_section(analytics_results, markdown_content)
-
-        # Add "Payments to Review" H2 heading before the EFTs sections
-        markdown_content.append("## Payments to Review\n\n")
-
-        # Separate EFTs by split status
-        not_split_efts = {}
-        split_efts = {}
-
-        for eft_num, eft in filtered_data_object.items():
-            if eft['is_split']:
-                split_efts[eft_num] = eft
-            else:
-                not_split_efts[eft_num] = eft
-
-        # Generate "EFTs - Not Split" section grouped by payment status
-        self._generate_not_split_section(not_split_efts, markdown_content)
-
-        # Generate "EFTs - Split" section grouped by EFT
-        self._generate_split_section(split_efts, markdown_content)
-
-        # Save markdown file
-        output_path = Path(output_dir) / f"{self.payer_name}_efts_filtered.md"
-
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(''.join(markdown_content))
-
-        print(f"   ✅ Filtered EFTs markdown saved to: {output_path}")
-        return str(output_path)
-

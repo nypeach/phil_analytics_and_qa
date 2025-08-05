@@ -19,18 +19,16 @@ class ExcelDataObjectCreator:
     Handles grouping of rows by EFT NUM, PMT NUM, PLAs, Encounters, and Services.
     """
 
-    def __init__(self, file_path: str, process_limit: Optional[int] = None, eft_filter: Optional[List[str]] = None):
+    def __init__(self, file_path: str, process_limit: Optional[int] = None):
         """
         Initialize the processor with the Excel file path and optional processing limit.
 
         Args:
             file_path (str): Path to the Excel file
             process_limit (int, optional): Maximum number of rows to process
-            eft_filter (List[str], optional): List of EFT numbers to filter for
         """
         self.file_path = Path(file_path)
         self.process_limit = process_limit
-        self.eft_filter = set(eft_filter) if eft_filter else None
         self.df = None
         self.payer_name = None
         self.data_object = {}
@@ -70,10 +68,6 @@ class ExcelDataObjectCreator:
 
             # Check for missing encounter/charge EFTs and remove them
             self._identify_and_remove_missing_encounter_charge_efts()
-            
-            # Apply EFT filter if provided
-            if self.eft_filter:
-                self._apply_eft_filter()
 
         except Exception as e:
             print(f"Error loading data: {e}")
@@ -125,33 +119,6 @@ class ExcelDataObjectCreator:
                 print("   ✅ No rows with missing encounter/charge descriptions found")
         else:
             print("   ⚠️ No 'Description' column found - skipping missing encounter/charge check")
-
-    def _apply_eft_filter(self):
-        """
-        Apply EFT filter to keep only rows for specified EFT numbers.
-        """
-        print(f"🔍 Applying EFT filter for {len(self.eft_filter)} EFTs...")
-        
-        if 'EFT NUM' in self.df.columns:
-            # Get current EFT numbers in the data
-            current_efts = set(self.df['EFT NUM'].astype(str).unique())
-            
-            # Find which filter EFTs actually exist in the data
-            existing_filter_efts = self.eft_filter.intersection(current_efts)
-            missing_filter_efts = self.eft_filter - current_efts
-            
-            print(f"   ✅ Found {len(existing_filter_efts)} of {len(self.eft_filter)} filter EFTs in data: {', '.join(sorted(existing_filter_efts))}")
-            if missing_filter_efts:
-                print(f"   ⚠️ Missing {len(missing_filter_efts)} filter EFTs: {', '.join(sorted(missing_filter_efts))}")
-            
-            # Filter dataframe to only include rows for the specified EFTs
-            original_row_count = len(self.df)
-            self.df = self.df[self.df['EFT NUM'].astype(str).isin(self.eft_filter)].copy()
-            filtered_row_count = len(self.df)
-            
-            print(f"   📊 Filtered from {original_row_count:,} rows to {filtered_row_count:,} rows")
-        else:
-            print("   ⚠️ No 'EFT NUM' column found - cannot apply EFT filter")
 
     def create_data_object(self) -> Dict:
         """
@@ -361,13 +328,6 @@ class ExcelDataObjectCreator:
             encounter_obj = self._create_encounter_object(enc_key, enc_rows)
             encounters[enc_key] = encounter_obj
 
-        # Calculate encounter counts
-        total_encounters = len(encounters)
-        
-        # Note: encs_to_check will be populated later by EncounterTagger, 
-        # so we initialize the counts to 0 for now
-        encs_to_check_count = 0
-
         # Build payment object
         payment = {
             "practice_id": str(practice_id),
@@ -379,9 +339,7 @@ class ExcelDataObjectCreator:
             "pla_l6_amts": pla_amounts["pla_l6_amts"],  # Sum of L6 PLA amounts
             "pla_other_amts": pla_amounts["pla_other_amts"],  # Sum of Other PLA amounts
             "encounters": encounters,
-            "encs_to_check": {},  # Will be populated by EncounterTagger
-            "total_encounters": total_encounters,  # Total number of encounters
-            "encs_to_check_count": encs_to_check_count  # Will be updated by EncounterTagger
+            "encs_to_check": {}  # Will be populated by EncounterTagger
         }
 
         return payment
@@ -753,117 +711,6 @@ class ExcelDataObjectCreator:
         }
 
         return stats
-
-    def create_stats_excel(self, output_path: str = None) -> str:
-        """
-        Create a stats Excel file with payment-level statistics.
-        
-        Args:
-            output_path (str, optional): Path for the output file. If None, uses input file path with _stats suffix.
-            
-        Returns:
-            str: Path to the created stats file
-        """
-        if not self.data_object:
-            raise ValueError("No data object available. Run create_data_object() first.")
-            
-        # Determine output path if not provided
-        if output_path is None:
-            input_stem = self.file_path.stem.replace('_Scrubbed', '')
-            output_path = self.file_path.parent / f"{input_stem}_stats.xlsx"
-        
-        print(f"📊 Creating stats Excel file: {output_path}")
-        
-        # Collect stats data
-        stats_data = []
-        
-        for eft_num, eft in self.data_object.items():
-            for payment_key, payment in eft["payments"].items():
-                # Calculate PLA count
-                pla_count = len(payment["plas"]["pla_l6"]) + len(payment["plas"]["pla_other"])
-                
-                # Get counts
-                encs_to_check_count = len(payment.get("encs_to_check", {}))
-                total_encounters = len(payment.get("encounters", {}))
-                
-                stats_row = {
-                    'PRACTICE': str(payment["practice_id"]),
-                    'EFT_NUM': str(eft["eft_num"]),
-                    'PMT_NUM': str(payment["num"]),
-                    'STATUS': str(payment.get("status", "")),
-                    'PLAs': pla_count,
-                    'ENCS_TO_CHECK': encs_to_check_count,
-                    'TOTAL_ENCS': total_encounters
-                }
-                
-                stats_data.append(stats_row)
-        
-        # Create DataFrame
-        stats_df = pd.DataFrame(stats_data)
-        
-        # Sort by EFT_NUM, then PMT_NUM
-        stats_df = stats_df.sort_values(['EFT_NUM', 'PMT_NUM'])
-        
-        # Create Excel writer with openpyxl engine for formatting control
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # Write data to Excel
-            stats_df.to_excel(writer, sheet_name='Stats', index=False)
-            
-            # Get the workbook and worksheet for formatting
-            workbook = writer.book
-            worksheet = writer.sheets['Stats']
-            
-            # Apply TEXT formatting to specified columns
-            text_columns = ['PRACTICE', 'EFT_NUM', 'PMT_NUM', 'STATUS']
-            
-            # Find column indices for text formatting
-            text_col_indices = []
-            for col_name in text_columns:
-                if col_name in stats_df.columns:
-                    col_idx = stats_df.columns.get_loc(col_name) + 1  # Excel is 1-indexed
-                    text_col_indices.append(col_idx)
-            
-            # Apply TEXT format to specified columns
-            from openpyxl.styles import NamedStyle
-            from openpyxl.utils import get_column_letter
-            
-            # Create a text format style
-            text_style = NamedStyle(name="text_format")
-            text_style.number_format = '@'  # '@' is the Excel TEXT format
-            
-            # Apply formatting to each text column
-            for col_idx in text_col_indices:
-                col_letter = get_column_letter(col_idx)
-                
-                # Format header
-                worksheet[f'{col_letter}1'].style = text_style
-                
-                # Format all data cells in this column
-                for row_idx in range(2, len(stats_df) + 2):  # +2 because Excel is 1-indexed and we have header
-                    cell = worksheet[f'{col_letter}{row_idx}']
-                    cell.style = text_style
-                    # Ensure the value is stored as text
-                    if cell.value is not None:
-                        cell.value = str(cell.value)
-            
-            # Auto-adjust column widths
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                
-                # Set width with some padding
-                adjusted_width = min(max_length + 2, 30)  # Cap at 30 characters
-                worksheet.column_dimensions[column_letter].width = adjusted_width
-        
-        print(f"✅ Stats Excel file created with {len(stats_data)} rows: {output_path}")
-        return str(output_path)
 
 
 class AnalyticsProcessor:
@@ -1259,9 +1106,6 @@ class EncounterTagger:
 
                 # Update payment with sorted encs_to_check
                 payment["encs_to_check"] = sorted_encs_to_check
-                
-                # Update the encounter count
-                payment["encs_to_check_count"] = len(sorted_encs_to_check)
 
         print(f"✅ Encounter tagging completed")
         return data_object

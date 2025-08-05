@@ -26,8 +26,7 @@ class PhilPipeline:
 
     def __init__(self, payer_folder: str, input_folder: Optional[str] = None,
                  output_folder: Optional[str] = None, mapping_file: Optional[str] = None,
-                 max_files: Optional[int] = None, save_combined: bool = True,
-                 payments_filter: Optional[str] = None):
+                 max_files: Optional[int] = None, save_combined: bool = True):
         """
         Initialize the PHIL Analytics pipeline.
 
@@ -38,7 +37,6 @@ class PhilPipeline:
             mapping_file (str, optional): Override default mapping file path
             max_files (int, optional): Maximum number of files to process (for testing)
             save_combined (bool): Whether to save a _combined.xlsx file for testing
-            payments_filter (str, optional): Semicolon-separated string of payment numbers for filtered markdown
         """
         print(f"🚀 Initializing PHIL Analytics Pipeline for: {payer_folder}")
         if max_files:
@@ -47,7 +45,6 @@ class PhilPipeline:
         self.payer_folder = payer_folder
         self.max_files = max_files
         self.save_combined = save_combined
-        self.payments_filter = payments_filter
 
         # Set up paths
         if input_folder is None:
@@ -221,8 +218,7 @@ class PhilPipeline:
 
         # Create data object from scrubbed Excel file
         process_limit = self.max_files * 1000 if self.max_files else None  # Estimate rows based on files
-        eft_filter = [eft.strip() for eft in self.payments_filter.split(';') if eft.strip()] if self.payments_filter else None
-        self.data_object_creator = ExcelDataObjectCreator(self.scrubbed_file_path, process_limit, eft_filter)
+        self.data_object_creator = ExcelDataObjectCreator(self.scrubbed_file_path, process_limit)
         self.data_object = self.data_object_creator.create_data_object()
 
         # Get summary stats
@@ -295,15 +291,6 @@ class PhilPipeline:
             self.analytics_results  # Pass analytics results
         )
 
-        # Generate filtered EFTs markdown if payments_filter was provided
-        self.filtered_markdown_file_path = None
-        if self.payments_filter:
-            self.filtered_markdown_file_path = self.markdown_generator.generate_filtered_efts_markdown(
-                self.data_object,
-                self.output_folder,
-                missing_encounter_efts,
-                self.analytics_results
-            )
 
         # Get markdown stats with missing encounter EFTs info
         markdown_stats = self.markdown_generator.generate_summary_stats(self.data_object, missing_encounter_efts)
@@ -381,7 +368,6 @@ class PhilPipeline:
             'output_folder': self.output_folder,
             'scrubbed_file': self.scrubbed_file_path,
             'markdown_file': getattr(self, 'markdown_file_path', ''),
-            'filtered_markdown_file': getattr(self, 'filtered_markdown_file_path', ''),
             'stats_file': getattr(self, 'stats_file_path', ''),
         }
 

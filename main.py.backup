@@ -7,7 +7,7 @@ Place this file in your project root directory and run it from your IDE.
 
 from phil_analytics import quick_pipeline
 
-def main(payer_folder, max_files=None, save_combined=True, payments_filter=None):
+def main(payer_folder, max_files=None, save_combined=True):
     """
     Main function to run the PHIL Analytics pipeline.
 
@@ -15,7 +15,6 @@ def main(payer_folder, max_files=None, save_combined=True, payments_filter=None)
         payer_folder (str): Name of the payer folder to process
         max_files (int, optional): Maximum number of files to process (None for all files)
         save_combined (bool): Whether to save a _combined.xlsx file for testing
-        payments_filter (str, optional): Semicolon-separated string of payment numbers for filtered markdown
     """
     print("🚀 Starting PHIL Analytics Pipeline...")
     print(f"   📁 Payer: {payer_folder}")
@@ -30,8 +29,7 @@ def main(payer_folder, max_files=None, save_combined=True, payments_filter=None)
         results = quick_pipeline(
             payer_folder=payer_folder,
             max_files=max_files,
-            save_combined=save_combined,
-            payments_filter=payments_filter
+            save_combined=save_combined
         )
 
         # Print results summary
@@ -50,8 +48,6 @@ def main(payer_folder, max_files=None, save_combined=True, payments_filter=None)
         print(f"   • Output folder: {results['output_folder']}")
         print(f"   • Scrubbed file: {results['scrubbed_file']}")
         print(f"   • EFTs markdown: {results['markdown_file']}")
-        if results.get('filtered_markdown_file'):
-            print(f"   • Filtered EFTs markdown: {results['filtered_markdown_file']}")
         print(f"   • Stats Excel: {results['stats_file']}")
 
     except Exception as e:
@@ -63,4 +59,4 @@ if __name__ == "__main__":
     payer_folder = "Regence"
     payments = "0197785666;0197780913;0197799798;0197799797;0197791902;0197784725;0197790042;0197805237;0197797808;0197807101"
     max_files = None
-    main(payer_folder, max_files, payments_filter=payments)
+    main(payer_folder, max_files)
