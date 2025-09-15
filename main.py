@@ -60,7 +60,7 @@ def main(payer_folder, max_files=None, save_combined=True, payments_filter=None)
         traceback.print_exc()
 
 if __name__ == "__main__":
-    payer_folder = "Regence"
-    payments = "0197785666;0197780913;0197799798;0197799797;0197791902;0197784725;0197790042;0197805237;0197797808;0197807101"
+    payer_folder = "Tricare_prod"
+    payments = ""
     max_files = None
     main(payer_folder, max_files, payments_filter=payments)

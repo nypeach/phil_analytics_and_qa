@@ -786,6 +786,10 @@ class ExcelDataObjectCreator:
                 encs_to_check_count = len(payment.get("encs_to_check", {}))
                 total_encounters = len(payment.get("encounters", {}))
                 
+                # Check for COB Balance and CHG/ENC NOT FOUND conditions
+                cob_balance = self._check_cob_balance(payment["practice_id"], eft["eft_num"], payment["num"], payment.get("status", ""))
+                chg_enc_not_found = self._check_chg_enc_not_found(payment["practice_id"], eft["eft_num"], payment["num"], payment.get("status", ""))
+                
                 stats_row = {
                     'PRACTICE': str(payment["practice_id"]),
                     'EFT_NUM': str(eft["eft_num"]),
@@ -793,7 +797,9 @@ class ExcelDataObjectCreator:
                     'STATUS': str(payment.get("status", "")),
                     'PLAs': pla_count,
                     'ENCS_TO_CHECK': encs_to_check_count,
-                    'TOTAL_ENCS': total_encounters
+                    'TOTAL_ENCS': total_encounters,
+                    'COB Balance': cob_balance,
+                    'CHG/ENC NOT FOUND': chg_enc_not_found
                 }
                 
                 stats_data.append(stats_row)
@@ -864,6 +870,75 @@ class ExcelDataObjectCreator:
         
         print(f"✅ Stats Excel file created with {len(stats_data)} rows: {output_path}")
         return str(output_path)
+        
+    def _check_cob_balance(self, practice_id: str, eft_num: str, pmt_num: str, status: str) -> str:
+        """
+        Check if any row in the same PRACTICE, EFT_NUM, PMT_NUM, STATUS has description containing 
+        "Payment not posted due to claim status" AND "matching COB balance".
+        
+        Args:
+            practice_id (str): Practice ID to filter by
+            eft_num (str): EFT number to filter by  
+            pmt_num (str): Payment number to filter by
+            status (str): Status to filter by
+            
+        Returns:
+            str: "Y" if condition is met, empty string otherwise
+        """
+        if self.df is None or 'Description' not in self.df.columns:
+            return ""
+            
+        # Filter rows for the same PRACTICE, EFT_NUM, PMT_NUM, STATUS
+        mask = (
+            (self.df['PRACTICE ID'].astype(str) == str(practice_id)) &
+            (self.df['EFT NUM'].astype(str) == str(eft_num)) &
+            (self.df['Chk Nbr'].astype(str) == str(pmt_num))
+        )
+        
+        filtered_rows = self.df[mask]
+        
+        # Check if any row has description containing both required phrases
+        for _, row in filtered_rows.iterrows():
+            description = str(row['Description']).strip().lower()
+            if ("payment not posted due to claim status" in description and 
+                "matching cob balance" in description):
+                return "Y"
+                
+        return ""
+        
+    def _check_chg_enc_not_found(self, practice_id: str, eft_num: str, pmt_num: str, status: str) -> str:
+        """
+        Check if any row in the same PRACTICE, EFT_NUM, PMT_NUM, STATUS has description containing
+        "Charge not found" OR "Encounter not found".
+        
+        Args:
+            practice_id (str): Practice ID to filter by
+            eft_num (str): EFT number to filter by
+            pmt_num (str): Payment number to filter by  
+            status (str): Status to filter by
+            
+        Returns:
+            str: "Y" if condition is met, empty string otherwise
+        """
+        if self.df is None or 'Description' not in self.df.columns:
+            return ""
+            
+        # Filter rows for the same PRACTICE, EFT_NUM, PMT_NUM, STATUS
+        mask = (
+            (self.df['PRACTICE ID'].astype(str) == str(practice_id)) &
+            (self.df['EFT NUM'].astype(str) == str(eft_num)) &
+            (self.df['Chk Nbr'].astype(str) == str(pmt_num))
+        )
+        
+        filtered_rows = self.df[mask]
+        
+        # Check if any row has description containing either phrase
+        for _, row in filtered_rows.iterrows():
+            description = str(row['Description']).strip().lower()
+            if ("charge not found" in description or "encounter not found" in description):
+                return "Y"
+                
+        return ""
 
 
 class AnalyticsProcessor:
